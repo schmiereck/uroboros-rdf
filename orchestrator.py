@@ -142,6 +142,22 @@ to conclude X."
 
 ---
 
+## File Layout Rules (CRITICAL – follow exactly)
+
+The research project has a fixed two-directory layout:
+
+  src/              ← ALL code lives here. Persistent across every iteration.
+                       Edit, extend, or replace files here as the work evolves.
+  archive/iter_NNN/ ← Metadata only: task.md, result.yaml, results/.
+                       NEVER create or run code inside archive/.
+
+When writing task_for_implementer, always refer to files as `src/<filename>`.
+NEVER write paths like `archive/iter_NNN/code/` – that layout no longer exists.
+If an earlier iteration produced `src/foo.py`, the implementer already has it;
+just reference or modify it in-place.
+
+---
+
 ## Output Format
 
 You MUST end every response with a YAML block in this exact schema:
@@ -258,9 +274,9 @@ rationale: |
   warmup may give a small improvement. 500 steps (5% of training) is a
   common default.
 task_for_implementer: |
-  Copy archive/iter_001/code/train.py to archive/iter_002/code/train.py.
-  Add 500-step linear warmup before cosine decay. All other hyperparameters
-  identical. Record val_loss every 500 steps. Compare final val_loss to
+  Edit src/train.py: add 500-step linear warmup before cosine decay.
+  All other hyperparameters identical to the baseline run. Record val_loss
+  every 500 steps. Write results to archive/iter_002/results/. Compare final val_loss to
   baseline (3.21) in result.yaml.
 expected_outcome: "val_loss < 3.15 (≥2% improvement). If ≥3.21: warmup ineffective."
 success_criteria:
@@ -309,9 +325,9 @@ rationale: |
   Warmup stabilises early training, creating headroom for higher LR. 2e-4 is
   a natural first step. If stable, a big improvement toward the 2.5 goal.
 task_for_implementer: |
-  Copy archive/iter_002/code/train.py to archive/iter_003/code/train.py.
-  Change lr=2e-4 (was 1e-4). Keep warmup=500, all else identical. Record
-  val_loss per 500 steps, LR curve, gradient norm (first 1k steps). Stop
+  Edit src/train.py: change lr=2e-4 (was 1e-4). Keep warmup=500, all else
+  identical. Record val_loss per 500 steps, LR curve, gradient norm (first
+  1k steps). Write results to archive/iter_003/results/. Stop
   early if loss > 10 or NaN; report the step.
 expected_outcome: "val_loss < 3.00 if stable. If >3.09: LR too high, needs clipping."
 success_criteria:
@@ -1217,6 +1233,14 @@ class Orchestrator:
 
         hypothesis = sy.get("hypothesis", "")
         console.print(f"[green]Hypothesis:[/green] {hypothesis}")
+
+        # Warn if Gemini still references the old archive/*/code/ pattern
+        task_text_raw = sy.get("task_for_implementer", "")
+        if re.search(r"archive/iter_\d+/code/", task_text_raw):
+            console.print(
+                "[yellow]Warnung: Gemini hat 'archive/iter_NNN/code/' in task_for_implementer "
+                "geschrieben. Das ist der alte Pfad. Code sollte in src/ landen.[/yellow]"
+            )
 
         task_path = iter_dir / "task.md"
         task_path.write_text(
