@@ -28,7 +28,7 @@ except ImportError:
         print("ERROR: Install tomli (`pip install tomli`) or use Python ≥ 3.11")
         sys.exit(1)
 
-console = Console()
+console = Console(highlight=False)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SYSTEM PROMPT  (padded to ≥ min_cache_tokens for Gemini context caching)
@@ -249,7 +249,7 @@ natural next step; if stable, we could approach val_loss < 3.0.
 
 ```yaml
 analysis: |
-  Warmup confirmed: val_loss 3.21→3.09 (3.7%, criterion ≥2% met, iter_002).
+  Warmup confirmed: val_loss 3.21->3.09 (3.7%, criterion ≥2% met, iter_002).
   Stable early training suggests headroom for higher LR.
 open_questions:
   - "Does lr=2e-4 with 500-step warmup achieve val_loss < 3.00?"
@@ -661,7 +661,7 @@ class StrategyAgent:
             except Exception as e:
                 if attempt < 2:
                     wait = 2 ** attempt
-                    console.print(f"[yellow]Gemini error (retry {attempt + 1}): {e}. Waiting {wait}s…[/yellow]")
+                    console.print(f"[yellow]Gemini error (retry {attempt + 1}): {e}. Waiting {wait}s...[/yellow]")
                     time.sleep(wait)
                 else:
                     raise
@@ -988,7 +988,7 @@ class Orchestrator:
     # ── init ──────────────────────────────────────────────────────────────────
 
     def init_lab(self) -> None:
-        console.print("[bold green]Initialising RDF lab…[/bold green]")
+        console.print("[bold green]Initialising RDF lab...[/bold green]")
         self._write_if_missing("goal.md", _GOAL_TEMPLATE)
         self._write_if_missing("current_state.md", _STATE_TEMPLATE)
         self._write_if_missing("experiment_log.md", _LOG_TEMPLATE)
@@ -1007,7 +1007,7 @@ class Orchestrator:
             subprocess.run([editor, str(self.root / "goal.md")])
 
         self.git.commit(self.root, "init: project scaffold")
-        console.print("[green]✓ Done. Edit goal.md, then run: python orchestrator.py run[/green]")
+        console.print("[green]OK Done. Edit goal.md, then run: python orchestrator.py run[/green]")
 
     def _write_if_missing(self, name: str, content: str) -> None:
         p = self.root / name
@@ -1017,7 +1017,7 @@ class Orchestrator:
     # ── bootstrap ─────────────────────────────────────────────────────────────
 
     def bootstrap(self) -> None:
-        console.print("[bold]Running bootstrap…[/bold]")
+        console.print("[bold]Running bootstrap...[/bold]")
         goal = (self.root / "goal.md").read_text(encoding="utf-8")
 
         if self.dry_run:
@@ -1043,7 +1043,7 @@ class Orchestrator:
         (self.root / "current_state.md").write_text(state, encoding="utf-8")
         if self.cfg.auto_commit:
             self.git.commit(self.root, "bootstrap: initial state from goal.md")
-        console.print("[green]✓ Bootstrap complete.[/green]")
+        console.print("[green]OK Bootstrap complete.[/green]")
 
     # ── iteration ─────────────────────────────────────────────────────────────
 
@@ -1073,9 +1073,9 @@ class Orchestrator:
         (iter_dir / "code").mkdir(exist_ok=True)
 
         # STRATEGY
-        console.print("[bold]→ STRATEGY (Gemini)[/bold]")
+        console.print("[bold]-> STRATEGY (Gemini)[/bold]")
         delta = self._delta_prompt(n, hint, chosen_q)
-        with console.status("Calling Gemini…"):
+        with console.status("Calling Gemini..."):
             sy, usage = self.strategy.call(self.root, delta, self.cfg, hint, chosen_q)
 
         hypothesis = sy.get("hypothesis", "")
@@ -1092,8 +1092,8 @@ class Orchestrator:
         )
 
         # IMPLEMENT
-        console.print("[bold]→ IMPLEMENT (Claude Code)[/bold]")
-        with console.status("Running Claude Code…"):
+        console.print("[bold]-> IMPLEMENT (Claude Code)[/bold]")
+        with console.status("Running Claude Code..."):
             iy = await self.implement.run(task_path.read_text(encoding="utf-8"), iter_dir, self.cfg)
         console.print(f"[green]Status:[/green] {iy.get('status', 'unknown')}")
 

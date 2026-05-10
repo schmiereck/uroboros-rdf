@@ -1,0 +1,8 @@
+artifacts:
+- archive/iter_002/code/run.py
+experimenter_view: '[Mock] Iteration 2 completed. No real computation.'
+log_excerpt: hello from iter 2
+metrics:
+  mock_value: 3.0
+notes: '[Mock] dry-run'
+status: ok

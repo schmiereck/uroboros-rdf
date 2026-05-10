@@ -1,21 +1,4 @@
-# Aktueller Wissensstand (Mock Bootstrap)
+# Current State (Mock)
 
-## Ziel
-# Forschungsziel
-
-<1-3 Absätze: Beschreibe das Forschungsziel>
-
-## Erfolgskriterien
-
-- ...
-
-## Beschränkungen
-
-- ...
-
-## Status
-Bereit für Iteration 1.
-
-## Offene Fragen
-- Mock-Frage A?
-- Mock-Frage B?
+Iteration 3 complete.
+Best mock_value: 4.5
