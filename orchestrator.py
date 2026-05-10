@@ -577,6 +577,7 @@ class Config:
     cache_ttl_hours: int = 6
     min_cache_tokens: int = 32768
     auto_commit: bool = True
+    auto_push: bool = False
     verbose: bool = True
 
     @classmethod
@@ -604,6 +605,7 @@ class Config:
         c.min_cache_tokens = ch.get("min_cache_tokens", c.min_cache_tokens)
         g = d.get("git", {})
         c.auto_commit = g.get("auto_commit", c.auto_commit)
+        c.auto_push = g.get("auto_push", c.auto_push)
         u = d.get("ui", {})
         c.verbose = u.get("verbose", c.verbose)
         return c
@@ -959,6 +961,11 @@ class GitManager:
         if r.returncode != 0 and "nothing to commit" not in r.stdout + r.stderr:
             console.print(f"[yellow]git commit warning: {r.stderr.strip()}[/yellow]")
 
+    def push(self, root: Path) -> None:
+        r = self._git(["push", "--follow-tags"], root, check=False)
+        if r.returncode != 0:
+            console.print(f"[yellow]git push warning: {r.stderr.strip()}[/yellow]")
+
     def tag(self, root: Path, name: str) -> None:
         self._git(["tag", name], root, check=False)
 
@@ -1105,7 +1112,7 @@ min_cache_tokens = 32768
 
 [git]
 auto_commit = true
-session_branch = false
+auto_push = false   # set to true to push to remote after every iteration
 
 [ui]
 verbose = true
@@ -1317,6 +1324,8 @@ class Orchestrator:
             if hypothesis.startswith("[CONVERGED]"):
                 self.git.tag(self.root, f"converged-{n:03d}")
                 console.print(f"[bold green]Converged – tagged converged-{n:03d}[/bold green]")
+            if self.cfg.auto_push:
+                self.git.push(self.root)
 
         inp, cac, out = _usage_tokens(usage)
         console.print(
