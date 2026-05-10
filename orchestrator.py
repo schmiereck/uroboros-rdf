@@ -572,19 +572,34 @@ def _stable_payload(root: Path, system_prompt: str) -> str:
     return f"{system_prompt}\n\n# GOAL\n{goal}\n\n# OLDER LOG\n{older}"
 
 
+def _usage_tokens(usage: Any) -> tuple[int, int, int]:
+    """Return (input, cached, output) tokens – compatible with old and new Gemini SDK."""
+    inp = getattr(usage, "prompt_token_count", None) or getattr(usage, "input_token_count", 0)
+    cac = getattr(usage, "cached_content_token_count", 0)
+    out = getattr(usage, "candidates_token_count", None) or getattr(usage, "output_token_count", 0)
+    return inp or 0, cac or 0, out or 0
+
+
 def _get_or_create_cache(root: Path, cfg: Config, system_prompt: str) -> Any:
-    """Return a Gemini CachedContent or None (silent fallback)."""
+    """Return a google.genai CachedContent or None (silent fallback)."""
     try:
-        from google.generativeai import caching  # type: ignore
-        import datetime
+        from google import genai  # type: ignore
+        from google.genai import types  # type: ignore
     except ImportError:
         return None
 
-    payload = _stable_payload(root, system_prompt)
-    if len(payload) < cfg.min_cache_tokens * 4:
+    goal = (root / "goal.md").read_text(encoding="utf-8")
+    log_path = root / "experiment_log.md"
+    log = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+    entries = log.split("\n---\n")
+    older = "\n---\n".join(entries[:-3]) if len(entries) > 3 else ""
+    stable_content = f"# GOAL\n{goal}\n\n# OLDER LOG\n{older}"
+
+    # Check minimum size: system_prompt + stable_content
+    if len(system_prompt) + len(stable_content) < cfg.min_cache_tokens * 4:
         return None
 
-    h = hashlib.sha256(payload.encode()).hexdigest()[:16]
+    h = hashlib.sha256((system_prompt + stable_content).encode()).hexdigest()[:16]
     state: dict = {}
     if _CACHE_FILE.exists():
         try:
@@ -592,18 +607,26 @@ def _get_or_create_cache(root: Path, cfg: Config, system_prompt: str) -> Any:
         except Exception:
             pass
 
+    client = genai.Client()
+
     if state.get("hash") == h:
         try:
-            return caching.CachedContent.get(state["cache_name"])
+            return client.caches.get(name=state["cache_name"])
         except Exception:
             pass
 
     try:
-        cache = caching.CachedContent.create(
+        cache = client.caches.create(
             model=cfg.strategy_model,
-            contents=[payload],
-            ttl=datetime.timedelta(hours=cfg.cache_ttl_hours),
-            display_name=f"rdf-{root.name}-{h}",
+            config=types.CreateCachedContentConfig(
+                system_instruction=system_prompt,
+                contents=[types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=stable_content)],
+                )],
+                ttl=f"{cfg.cache_ttl_hours * 3600}s",
+                display_name=f"rdf-{root.name}-{h}",
+            ),
         )
         _CACHE_FILE.write_text(json.dumps({"hash": h, "cache_name": cache.name}))
         return cache
@@ -629,7 +652,8 @@ class StrategyAgent:
         self, root: Path, delta: str, cfg: Config,
         hint: Optional[str] = None, chosen_q: Optional[str] = None,
     ) -> tuple[dict, Any]:
-        import google.generativeai as genai  # type: ignore
+        from google import genai  # type: ignore
+        from google.genai import types  # type: ignore
 
         system_prompt = self._prompt(root, cfg)
         if hint:
@@ -638,16 +662,19 @@ class StrategyAgent:
             delta += f"\n\n## Focus Question\n{chosen_q}"
 
         cache = _get_or_create_cache(root, cfg, system_prompt)
+        client = genai.Client()
 
         for attempt in range(3):
             try:
                 if cache:
-                    model = genai.GenerativeModel.from_cached_content(cache)
+                    gen_cfg = types.GenerateContentConfig(cached_content=cache.name)
                 else:
-                    model = genai.GenerativeModel(cfg.strategy_model, system_instruction=system_prompt)
-                resp = model.generate_content(
-                    delta,
-                    request_options={"timeout": cfg.strategy_timeout_sec},
+                    gen_cfg = types.GenerateContentConfig(system_instruction=system_prompt)
+
+                resp = client.models.generate_content(
+                    model=cfg.strategy_model,
+                    contents=delta,
+                    config=gen_cfg,
                 )
                 # YAML retry loop
                 text = resp.text
@@ -658,10 +685,13 @@ class StrategyAgent:
                         if parse_attempt >= cfg.max_retries_on_parse_fail:
                             raise
                         console.print("[yellow]YAML parse failed – retrying with correction prompt[/yellow]")
-                        fix_resp = model.generate_content(
-                            "Your previous response did not contain a valid ```yaml``` block. "
-                            "Please respond again with the exact YAML schema specified in the instructions.",
-                            request_options={"timeout": cfg.strategy_timeout_sec},
+                        fix_resp = client.models.generate_content(
+                            model=cfg.strategy_model,
+                            contents=(
+                                "Your previous response did not contain a valid ```yaml``` block. "
+                                "Please respond again with the exact YAML schema specified."
+                            ),
+                            config=gen_cfg,
                         )
                         text = fix_resp.text
             except yaml.YAMLError:
@@ -736,13 +766,20 @@ class ImplementAgent:
         errors: list[str] = []
 
         async def _stream() -> None:
-            async for msg in query(prompt=task_text, options=options):
-                if hasattr(msg, "content"):
-                    for block in msg.content:
-                        if hasattr(block, "text"):
-                            collected.append(block.text)
-                if getattr(msg, "is_error", False):
-                    errors.append(str(getattr(msg, "error", msg)))
+            try:
+                async for msg in query(prompt=task_text, options=options):
+                    if hasattr(msg, "content"):
+                        for block in msg.content:
+                            if hasattr(block, "text"):
+                                collected.append(block.text)
+                    if getattr(msg, "is_error", False):
+                        errors.append(str(getattr(msg, "error", msg)))
+            except Exception as e:
+                if "Unknown message type" in str(e):
+                    # rate_limit_event and similar non-fatal events not yet in SDK
+                    console.print(f"[yellow]SDK: skipped unknown message ({e})[/yellow]")
+                else:
+                    errors.append(f"Stream error: {e}")
 
         try:
             timeout = cfg.experiment_timeout_sec
@@ -853,9 +890,9 @@ def _append_log(
         "status": iy.get("status", "unknown"),
         "metrics": iy.get("metrics", {}),
         "cost_usd": round(cost, 5),
-        "input_tokens": getattr(usage, "input_token_count", 0),
-        "cached_tokens": getattr(usage, "cached_content_token_count", 0),
-        "output_tokens": getattr(usage, "output_token_count", 0),
+        "input_tokens": _usage_tokens(usage)[0],
+        "cached_tokens": _usage_tokens(usage)[1],
+        "output_tokens": _usage_tokens(usage)[2],
     }, allow_unicode=True)
 
     body = (
@@ -900,9 +937,7 @@ def _update_state(
 
 
 def _estimate_cost(usage: Any, model: str) -> float:
-    inp = getattr(usage, "input_token_count", 0)
-    cac = getattr(usage, "cached_content_token_count", 0)
-    out = getattr(usage, "output_token_count", 0)
+    inp, cac, out = _usage_tokens(usage)
     if "2.5-pro" in model:
         ip, cp, op = 3.50e-6, 0.875e-6, 10.50e-6
     else:
@@ -1123,9 +1158,7 @@ class Orchestrator:
                 self.git.tag(self.root, f"converged-{n:03d}")
                 console.print(f"[bold green]Converged – tagged converged-{n:03d}[/bold green]")
 
-        inp = getattr(usage, "input_token_count", 0)
-        cac = getattr(usage, "cached_content_token_count", 0)
-        out = getattr(usage, "output_token_count", 0)
+        inp, cac, out = _usage_tokens(usage)
         console.print(
             f"[dim]Tokens: {inp/1000:.1f}k in (cached {cac/1000:.1f}k), "
             f"{out/1000:.1f}k out | ~${cost:.4f} | session ~${self.session_cost:.4f}[/dim]"
