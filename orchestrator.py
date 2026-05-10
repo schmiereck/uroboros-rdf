@@ -778,6 +778,40 @@ class MockStrategyAgent:
 # IMPLEMENT AGENT  (Claude Agent SDK)
 # ─────────────────────────────────────────────────────────────────────────────
 
+import contextlib
+import os as _os
+
+
+@contextlib.contextmanager
+def _project_venv(project_root: Path):
+    """Temporarily prepend the project's .venv/bin (or Scripts on Windows) to
+    PATH and set VIRTUAL_ENV so that any subprocess Claude Code spawns uses the
+    project's own Python interpreter instead of the orchestrator's venv."""
+    venv_dir = project_root / ".venv"
+    if not venv_dir.is_dir():
+        yield
+        return
+
+    bin_dir = venv_dir / ("Scripts" if sys.platform == "win32" else "bin")
+    old_path = _os.environ.get("PATH", "")
+    old_venv = _os.environ.get("VIRTUAL_ENV")
+    old_home = _os.environ.get("PYTHONHOME")
+
+    _os.environ["PATH"] = str(bin_dir) + _os.pathsep + old_path
+    _os.environ["VIRTUAL_ENV"] = str(venv_dir)
+    _os.environ.pop("PYTHONHOME", None)
+    try:
+        yield
+    finally:
+        _os.environ["PATH"] = old_path
+        if old_venv is not None:
+            _os.environ["VIRTUAL_ENV"] = old_venv
+        else:
+            _os.environ.pop("VIRTUAL_ENV", None)
+        if old_home is not None:
+            _os.environ["PYTHONHOME"] = old_home
+
+
 class ImplementAgent:
     async def run(self, task_text: str, iter_dir: Path, src_dir: Path, cfg: Config) -> dict:
         from claude_code_sdk import query, ClaudeCodeOptions  # type: ignore
@@ -804,12 +838,14 @@ class ImplementAgent:
                 if getattr(msg, "is_error", False):
                     errors.append(str(getattr(msg, "error", msg)))
 
+        project_root = src_dir.parent
         try:
-            timeout = cfg.experiment_timeout_sec
-            if timeout:
-                await asyncio.wait_for(_stream(), timeout=float(timeout))
-            else:
-                await _stream()
+            with _project_venv(project_root):
+                timeout = cfg.experiment_timeout_sec
+                if timeout:
+                    await asyncio.wait_for(_stream(), timeout=float(timeout))
+                else:
+                    await _stream()
         except asyncio.TimeoutError:
             errors.append(f"Timeout after {cfg.experiment_timeout_sec}s")
 
@@ -1037,11 +1073,25 @@ verbose = true
 _GITIGNORE = """\
 .rdf_cache.json
 archive/*/raw/
+archive/*/stdout.txt
+archive/*/stderr.txt
 __pycache__/
 *.pyc
 .venv/
 *.egg-info/
 dist/
+"""
+
+_RESEARCH_REQUIREMENTS_TEMPLATE = """\
+# Research project dependencies
+# Add packages needed by experiments in src/ here.
+# Create the venv once with:
+#   python -m venv .venv
+#   .venv\\Scripts\\activate   # Windows
+#   pip install -r requirements.txt
+#
+# The orchestrator will automatically use this venv for the Claude agent
+# if .venv/ exists in the project directory.
 """
 
 
@@ -1068,6 +1118,7 @@ class Orchestrator:
         self._write_if_missing("experiment_log.md", _LOG_TEMPLATE)
         self._write_if_missing("config.toml", _CONFIG_TEMPLATE)
         self._write_if_missing(".gitignore", _GITIGNORE)
+        self._write_if_missing("requirements.txt", _RESEARCH_REQUIREMENTS_TEMPLATE)
         (self.root / "archive").mkdir(exist_ok=True)
         (self.root / "src").mkdir(exist_ok=True)
 
@@ -1295,6 +1346,21 @@ class Orchestrator:
 
         if "Bootstrap erforderlich" in state_text and _read_iter_num(self.root) == 0:
             self.bootstrap()
+
+        # Warn if project has requirements.txt but no .venv yet
+        if not self.dry_run:
+            venv_dir = self.root / ".venv"
+            req_file = self.root / "requirements.txt"
+            if req_file.exists() and not venv_dir.is_dir():
+                console.print(
+                    "[yellow]Hinweis: requirements.txt gefunden, aber kein .venv/. "
+                    "Der Experimentator nutzt das System-Python. "
+                    "Eigenes venv anlegen mit:[/yellow]\n"
+                    f"  python -m venv {self.root / '.venv'}\n"
+                    f"  {self.root / '.venv' / ('Scripts' if sys.platform == 'win32' else 'bin') / 'pip'}"
+                    f" install -r {req_file}",
+                    markup=False,
+                )
 
         hint: Optional[str] = None
         chosen_q: Optional[str] = None
