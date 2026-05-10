@@ -821,13 +821,22 @@ class ImplementAgent:
         try:
             result = parse_yaml_block(full_output)
         except yaml.YAMLError:
+            # Fallback: Claude may have written result.yaml directly to iter_dir
+            result_file = iter_dir / "result.yaml"
+            if result_file.exists():
+                try:
+                    existing = yaml.safe_load(result_file.read_text(encoding="utf-8"))
+                    if isinstance(existing, dict) and existing.get("status") not in (None, "code_error"):
+                        return existing  # Use Claude's file; do not overwrite it
+                except Exception:
+                    pass
             result = {
                 "status": "code_error",
                 "artifacts": [],
                 "metrics": {},
                 "log_excerpt": full_output[-2000:],
-                "experimenter_view": "No YAML block found in output.",
-                "notes": "Parse failed – check stdout.txt",
+                "experimenter_view": "No yaml block in output – check stdout.txt",
+                "notes": "Parse failed",
             }
 
         (iter_dir / "result.yaml").write_text(yaml.dump(result, allow_unicode=True), encoding="utf-8")
@@ -1154,7 +1163,22 @@ class Orchestrator:
             f"**Hypothesis:** {hypothesis}\n\n"
             f"## Task\n\n{sy.get('task_for_implementer', '')}\n\n"
             f"## Success Criteria\n\n"
-            + "\n".join(f"- {c}" for c in sy.get("success_criteria", [])),
+            + "\n".join(f"- {c}" for c in sy.get("success_criteria", []))
+            + "\n\n## Required Output\n\n"
+            "You MUST end your final response with a ```yaml``` code block in this exact schema "
+            "(the orchestrator reads it to determine success):\n\n"
+            "```yaml\n"
+            "status: ok  # or experiment_failed or code_error\n"
+            "artifacts:\n"
+            "  - path/to/created/file  # relative to the repo root\n"
+            "metrics:\n"
+            "  key: value  # any numeric results\n"
+            "log_excerpt: |  # last ~20 lines of relevant output\n"
+            "  ...\n"
+            "experimenter_view: |  # your qualitative observations\n"
+            "  ...\n"
+            "notes: brief technical remark\n"
+            "```\n",
             encoding="utf-8",
         )
 
@@ -1205,21 +1229,21 @@ class Orchestrator:
         ))
         if open_qs:
             console.print(
-                "\n[bold]Forschungsrichtungen, die Gemini als naechstes erkunden will[/bold] "
-                "[dim](mit [o] eine davon als Fokus setzen):[/dim]"
+                "\n[bold]Forschungsrichtungen, die Gemini erkunden will[/bold] "
+                "[dim](mit [[o]] eine davon als Fokus setzen):[/dim]"
             )
             for i, q in enumerate(open_qs, 1):
                 console.print(f"  {i}. {q}")
 
         console.print(
-            "\n[bold]Aktionen[/bold] – tippe einen Buchstaben und druecke Enter:\n"
-            "  y  Naechste Iteration starten (Gemini waehlt Richtung)\n"
-            "  o  Eine der obigen Forschungsrichtungen als Fokus vorgeben\n"
-            "  h  Hinweis an Gemini fuer die naechste Iteration eingeben\n"
-            "  r  Diese Iteration wiederholen (mit neuem Hinweis)\n"
-            "  d  git diff --stat HEAD~1 anzeigen\n"
-            "  s  Status-Bericht (git log)\n"
-            "  n  Stoppen und speichern\n"
+            "\n[bold]Aktionen[/bold] – Buchstabe tippen + Enter:\n"
+            "  [[y]]  Naechste Iteration (Gemini waehlt Richtung)\n"
+            "  [[o]]  Forschungsrichtung als Fokus vorgeben (Nummer eingeben)\n"
+            "  [[h]]  Hinweis an Gemini fuer naechste Iteration\n"
+            "  [[r]]  Iteration wiederholen (mit neuem Hinweis)\n"
+            "  [[d]]  git diff --stat HEAD~1\n"
+            "  [[s]]  Status-Bericht (git log)\n"
+            "  [[n]]  Stoppen und speichern\n"
         )
 
         while True:
