@@ -1,4 +1,4 @@
 # Current State (Mock)
 
-Iteration 3 complete.
-Best mock_value: 4.5
+Iteration 2 complete.
+Best mock_value: 3.0

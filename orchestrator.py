@@ -28,7 +28,15 @@ except ImportError:
         print("ERROR: Install tomli (`pip install tomli`) or use Python ≥ 3.11")
         sys.exit(1)
 
-console = Console(highlight=False)
+# On Windows, reconfigure stdout/stderr to UTF-8 and disable the legacy
+# Windows Console API path in Rich (which is limited to the current codepage).
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+console = Console(highlight=False, legacy_windows=False)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SYSTEM PROMPT  (padded to ≥ min_cache_tokens for Gemini context caching)
