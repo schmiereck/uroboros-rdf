@@ -38,6 +38,29 @@ if sys.platform == "win32":
 
 console = Console(highlight=False, legacy_windows=False)
 
+
+def _patch_claude_sdk() -> None:
+    """Make claude_code_sdk yield None for unknown message types (e.g. rate_limit_event)
+    instead of raising MessageParseError, so the stream continues uninterrupted."""
+    try:
+        from claude_code_sdk._internal import message_parser  # type: ignore
+        from claude_code_sdk._errors import MessageParseError  # type: ignore
+        _orig = message_parser.parse_message
+
+        def _safe_parse(data: dict) -> Any:
+            try:
+                return _orig(data)
+            except MessageParseError:
+                return None  # Unknown type – caller skips None
+
+        message_parser.parse_message = _safe_parse
+    except Exception:
+        pass  # Fail silently if SDK internals change
+
+
+_patch_claude_sdk()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SYSTEM PROMPT  (padded to ≥ min_cache_tokens for Gemini context caching)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -766,20 +789,15 @@ class ImplementAgent:
         errors: list[str] = []
 
         async def _stream() -> None:
-            try:
-                async for msg in query(prompt=task_text, options=options):
-                    if hasattr(msg, "content"):
-                        for block in msg.content:
-                            if hasattr(block, "text"):
-                                collected.append(block.text)
-                    if getattr(msg, "is_error", False):
-                        errors.append(str(getattr(msg, "error", msg)))
-            except Exception as e:
-                if "Unknown message type" in str(e):
-                    # rate_limit_event and similar non-fatal events not yet in SDK
-                    console.print(f"[yellow]SDK: skipped unknown message ({e})[/yellow]")
-                else:
-                    errors.append(f"Stream error: {e}")
+            async for msg in query(prompt=task_text, options=options):
+                if msg is None:
+                    continue  # rate_limit_event or other unknown type – patched to None
+                if hasattr(msg, "content"):
+                    for block in msg.content:
+                        if hasattr(block, "text"):
+                            collected.append(block.text)
+                if getattr(msg, "is_error", False):
+                    errors.append(str(getattr(msg, "error", msg)))
 
         try:
             timeout = cfg.experiment_timeout_sec
@@ -1180,40 +1198,50 @@ class Orchestrator:
             title=f"[bold blue]── ITERATION {n:03d} ABGESCHLOSSEN ──[/bold blue]",
         ))
         if open_qs:
-            console.print("\n[bold]Offene Fragen (von Gemini):[/bold]")
+            console.print(
+                "\n[bold]Forschungsrichtungen, die Gemini als naechstes erkunden will[/bold] "
+                "[dim](mit [o] eine davon als Fokus setzen):[/dim]"
+            )
             for i, q in enumerate(open_qs, 1):
                 console.print(f"  {i}. {q}")
+
         console.print(
-            "\n  [y] Nächste Iteration   [o] Frage wählen   [h] Hint hinzufügen\n"
-            "  [r] Iteration wiederholen (mit Hint)       [d] git diff\n"
-            "  [s] Status-Bericht                         [n] Stoppen\n"
+            "\n[bold]Aktionen[/bold] – tippe einen Buchstaben und druecke Enter:\n"
+            "  y  Naechste Iteration starten (Gemini waehlt Richtung)\n"
+            "  o  Eine der obigen Forschungsrichtungen als Fokus vorgeben\n"
+            "  h  Hinweis an Gemini fuer die naechste Iteration eingeben\n"
+            "  r  Diese Iteration wiederholen (mit neuem Hinweis)\n"
+            "  d  git diff --stat HEAD~1 anzeigen\n"
+            "  s  Status-Bericht (git log)\n"
+            "  n  Stoppen und speichern\n"
         )
 
         while True:
-            choice = console.input("> ").strip().lower()
+            choice = console.input("[bold]Eingabe [y/o/h/r/d/s/n]:[/bold] ").strip().lower()
             if choice not in ("y", "o", "h", "r", "d", "s", "n"):
-                console.print("[yellow]Bitte y/o/h/r/d/s/n eingeben.[/yellow]")
+                console.print("[yellow]Unbekannte Eingabe – bitte y, o, h, r, d, s oder n eingeben.[/yellow]")
                 continue
 
             hint: Optional[str] = None
             chosen_q: Optional[str] = None
 
             if choice == "d":
-                console.print(self.git.diff_stat(self.root) or "(no diff)")
+                console.print(self.git.diff_stat(self.root) or "(kein Diff)")
                 continue
             if choice == "s":
                 console.print(f"\n[bold]git log:[/bold]\n{self.git.log_oneline(self.root)}")
                 continue
             if choice == "o" and open_qs:
-                raw = console.input(f"Frage wählen (1–{len(open_qs)}): ").strip()
+                raw = console.input(f"Nummer der Richtung (1-{len(open_qs)}): ").strip()
                 try:
                     chosen_q = open_qs[int(raw) - 1]
+                    console.print(f"[green]Fokus gesetzt:[/green] {chosen_q}")
                 except (ValueError, IndexError):
-                    console.print("[yellow]Ungültige Auswahl.[/yellow]")
+                    console.print("[yellow]Ungueltige Nummer.[/yellow]")
                     continue
                 choice = "y"
             if choice in ("h", "r"):
-                hint = console.input("Hint: ").strip()
+                hint = console.input("Hinweis an Gemini: ").strip()
                 if choice == "h":
                     choice = "y"
 
