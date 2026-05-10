@@ -146,3 +146,48 @@ This script must:
 
 **Metrics:** `{}`
 
+
+---
+```yaml
+cached_tokens: 32099
+cost_usd: 0.04859
+hypothesis: 'baseline: The formal filter identifies at least one non-trivial, reversible,
+  bit-conserving rule for a 1D, 3-bit neighborhood.'
+input_tokens: 33489
+iter: 8
+metrics: {}
+output_tokens: 1489
+status: code_error
+```
+
+## iter_008: baseline: The formal filter identifies at least one non-trivial, reversible, bit-conserving rule for a 1D, 3-bit neighborhood.
+
+**Analysis:** We are at the beginning of Phase 1 (Orientation). The previous experiment logs appear to be mock data from a different project and can be disregarded. The first real attempt (logged as iter_006) was to establish a baseline by finding all valid rules for the simplest 1D, 3-bit case. This attempt failed with a `code_error`, meaning we have not yet produced any data to confirm or refute our most fundamental hypothesis: that non-trivial, reversible, bit-conserving rules actually exist.
+
+The immediate and only priority is to successfully execute this first experiment. We cannot build upon a foundation that has not been laid. The scientific question remains the same, but the task is now to debug and robustly implement the "Formaler Filter" to get our first piece of evidence. This is a classic "Observation Before Hypothesis" step; we need to see what the rule space looks like before theorizing about it. I will re-number this attempt as `iter_001` to establish a clean, canonical history for this research project.
+
+**Task:** Create a Python script `archive/iter_001/code/generate_rules.py`. This script must be robust and handle the case where no rules are found without crashing.
+
+1.  **Define State Space**: The state space for a 1D, 3-bit neighborhood consists of 8 states: '000', '001', '010', ..., '111'.
+2.  **Group by Hamming Weight**: Group these states by their Hamming weight (number of '1's).
+    - Weight 0: {'000'}
+    - Weight 1: {'001', '010', '100'}
+    - Weight 2: {'011', '101', '110'}
+    - Weight 3: {'111'}
+3.  **Generate Permutations**: A rule is a permutation of the 8 states. To ensure bit-conservation, we only need to find permutations *within* each Hamming weight group. Generate all permutations for each group (e.g., all 3! = 6 permutations for the weight-1 group).
+4.  **Construct Full Rules**: Iterate through all combinations of these intra-group permutations to construct the full rule tables.
+5.  **Filter Trivial Rules**: Identify and count rules that are:
+    - **Identity**: Every state maps to itself.
+    - **Global Shift Left**: The rule is equivalent to `output = roll(input, -1)`. For example, '101' -> '011'.
+    - **Global Shift Right**: The rule is equivalent to `output = roll(input, 1)`. For example, '101' -> '110'.
+6.  **Write Outputs**:
+    - Create `archive/iter_001/results/`.
+    - Save all valid, non-trivial rules to `archive/iter_001/results/valid_rules.json`. This should be a list of dictionaries, where each dictionary represents a rule (e.g., `[{'000':'000', '001':'010', ...}, ...]`).
+    - **Crucially**, create `archive/iter_001/result.yaml` with a summary, even if no rules are found. The file must contain:
+
+**Status:** code_error
+
+**Experimenter view:** No YAML block found in output.
+
+**Metrics:** `{}`
+
