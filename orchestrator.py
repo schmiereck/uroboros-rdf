@@ -1228,54 +1228,53 @@ class Orchestrator:
             title=f"[bold blue]── ITERATION {n:03d} ABGESCHLOSSEN ──[/bold blue]",
         ))
         if open_qs:
-            console.print(
-                "\n[bold]Forschungsrichtungen, die Gemini erkunden will[/bold] "
-                "[dim](mit [[o]] eine davon als Fokus setzen):[/dim]"
-            )
+            console.print("\n[bold]Forschungsrichtungen, die Gemini erkunden will:[/bold]")
             for i, q in enumerate(open_qs, 1):
-                console.print(f"  {i}. {q}")
+                console.print(f"  [cyan]{i}.[/cyan] {q}")
 
+        o_hint = f"  o1-o{len(open_qs)}  Forschungsrichtung als Fokus (z.B. o2)\n" if open_qs else ""
         console.print(
-            "\n[bold]Aktionen[/bold] – Buchstabe tippen + Enter:\n"
-            "  [[y]]  Naechste Iteration (Gemini waehlt Richtung)\n"
-            "  [[o]]  Forschungsrichtung als Fokus vorgeben (Nummer eingeben)\n"
-            "  [[h]]  Hinweis an Gemini fuer naechste Iteration\n"
-            "  [[r]]  Iteration wiederholen (mit neuem Hinweis)\n"
-            "  [[d]]  git diff --stat HEAD~1\n"
-            "  [[s]]  Status-Bericht (git log)\n"
-            "  [[n]]  Stoppen und speichern\n"
+            "\n[bold]Aktionen[/bold] – Buchstabe(n) + Enter:\n"
+            "  y      Naechste Iteration (Gemini waehlt Richtung)\n"
+            + o_hint +
+            "  h      Hinweis an Gemini fuer naechste Iteration\n"
+            "  r      Iteration wiederholen (mit neuem Hinweis)\n"
+            "  d      git diff --stat HEAD~1\n"
+            "  s      Status-Bericht (git log)\n"
+            "  n      Stoppen und speichern\n",
+            markup=False,
         )
 
         while True:
-            choice = console.input("[bold]Eingabe [y/o/h/r/d/s/n]:[/bold] ").strip().lower()
-            if choice not in ("y", "o", "h", "r", "d", "s", "n"):
-                console.print("[yellow]Unbekannte Eingabe – bitte y, o, h, r, d, s oder n eingeben.[/yellow]")
-                continue
+            raw = console.input("[bold]Eingabe:[/bold] ").strip().lower()
 
             hint: Optional[str] = None
             chosen_q: Optional[str] = None
 
-            if choice == "d":
-                console.print(self.git.diff_stat(self.root) or "(kein Diff)")
+            # o<N>: one-step research direction focus
+            m = re.match(r"^o(\d+)$", raw)
+            if m and open_qs:
+                idx = int(m.group(1)) - 1
+                if 0 <= idx < len(open_qs):
+                    chosen_q = open_qs[idx]
+                    console.print(f"[green]Fokus:[/green] {chosen_q}")
+                    return "y", hint, chosen_q
+                console.print(f"[yellow]Bitte o1 bis o{len(open_qs)} eingeben.[/yellow]")
                 continue
-            if choice == "s":
+
+            if raw == "d":
+                console.print(self.git.diff_stat(self.root) or "(kein Diff)", markup=False)
+                continue
+            if raw == "s":
                 console.print(f"\n[bold]git log:[/bold]\n{self.git.log_oneline(self.root)}")
                 continue
-            if choice == "o" and open_qs:
-                raw = console.input(f"Nummer der Richtung (1-{len(open_qs)}): ").strip()
-                try:
-                    chosen_q = open_qs[int(raw) - 1]
-                    console.print(f"[green]Fokus gesetzt:[/green] {chosen_q}")
-                except (ValueError, IndexError):
-                    console.print("[yellow]Ungueltige Nummer.[/yellow]")
-                    continue
-                choice = "y"
-            if choice in ("h", "r"):
+            if raw in ("h", "r"):
                 hint = console.input("Hinweis an Gemini: ").strip()
-                if choice == "h":
-                    choice = "y"
-
-            return choice, hint, chosen_q
+                if raw == "h":
+                    raw = "y"
+            if raw in ("y", "r", "n"):
+                return raw, hint, chosen_q
+            console.print("[yellow]Unbekannte Eingabe.[/yellow]")
 
     # ── main loop ─────────────────────────────────────────────────────────────
 
