@@ -779,14 +779,13 @@ class MockStrategyAgent:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ImplementAgent:
-    async def run(self, task_text: str, iter_dir: Path, cfg: Config) -> dict:
+    async def run(self, task_text: str, iter_dir: Path, src_dir: Path, cfg: Config) -> dict:
         from claude_code_sdk import query, ClaudeCodeOptions  # type: ignore
 
-        code_dir = iter_dir / "code"
-        code_dir.mkdir(parents=True, exist_ok=True)
+        src_dir.mkdir(parents=True, exist_ok=True)
 
         tools = [t.strip() for t in cfg.allowed_tools.split(",")]
-        kwargs: dict[str, Any] = {"allowed_tools": tools, "cwd": code_dir}
+        kwargs: dict[str, Any] = {"allowed_tools": tools, "cwd": src_dir}
         if cfg.dangerously_skip_permissions:
             kwargs["permission_mode"] = "bypassPermissions"
         options = ClaudeCodeOptions(**kwargs)
@@ -844,12 +843,11 @@ class ImplementAgent:
 
 
 class MockImplementAgent:
-    async def run(self, task_text: str, iter_dir: Path, cfg: Config) -> dict:
-        code_dir = iter_dir / "code"
-        code_dir.mkdir(parents=True, exist_ok=True)
+    async def run(self, task_text: str, iter_dir: Path, src_dir: Path, cfg: Config) -> dict:
+        src_dir.mkdir(parents=True, exist_ok=True)
         n = int(re.search(r"\d+", iter_dir.name).group())
 
-        script = code_dir / "run.py"
+        script = src_dir / f"run_iter_{n:03d}.py"
         script.write_text(f'print("hello from iter {n}")\n', encoding="utf-8")
 
         result = {
@@ -1071,6 +1069,7 @@ class Orchestrator:
         self._write_if_missing("config.toml", _CONFIG_TEMPLATE)
         self._write_if_missing(".gitignore", _GITIGNORE)
         (self.root / "archive").mkdir(exist_ok=True)
+        (self.root / "src").mkdir(exist_ok=True)
 
         if not self.git.is_repo(self.root):
             subprocess.run(["git", "init", "-b", "main"], cwd=self.root, check=True)
@@ -1083,7 +1082,7 @@ class Orchestrator:
             subprocess.run([editor, str(self.root / "goal.md")])
 
         self.git.commit(self.root, "init: project scaffold")
-        console.print("[green]OK Done. Edit goal.md, then run: python orchestrator.py run[/green]")
+        console.print("[green]OK Done. Edit goal.md, then run: python orchestrator.py --project <dir> run[/green]")
 
     def _write_if_missing(self, name: str, content: str) -> None:
         p = self.root / name
@@ -1146,7 +1145,8 @@ class Orchestrator:
         console.rule(f"[bold blue]ITERATION {n:03d}[/bold blue]")
         iter_dir = self.root / "archive" / f"iter_{n:03d}"
         iter_dir.mkdir(parents=True, exist_ok=True)
-        (iter_dir / "code").mkdir(exist_ok=True)
+        src_dir = self.root / "src"
+        src_dir.mkdir(exist_ok=True)
 
         # STRATEGY
         console.print("[bold]-> STRATEGY (Gemini)[/bold]")
@@ -1161,6 +1161,11 @@ class Orchestrator:
         task_path.write_text(
             f"# Task – iter_{n:03d}\n\n"
             f"**Hypothesis:** {hypothesis}\n\n"
+            f"## Working Directory\n\n"
+            f"Your working directory is `src/` – a **persistent** directory shared across all "
+            f"iterations. Build on code from previous iterations; do not start from scratch each time.\n"
+            f"Write results and data files to `archive/iter_{n:03d}/results/` "
+            f"(relative to the project root).\n\n"
             f"## Task\n\n{sy.get('task_for_implementer', '')}\n\n"
             f"## Success Criteria\n\n"
             + "\n".join(f"- {c}" for c in sy.get("success_criteria", []))
@@ -1170,7 +1175,7 @@ class Orchestrator:
             "```yaml\n"
             "status: ok  # or experiment_failed or code_error\n"
             "artifacts:\n"
-            "  - path/to/created/file  # relative to the repo root\n"
+            "  - path/to/created/file  # relative to the project root\n"
             "metrics:\n"
             "  key: value  # any numeric results\n"
             "log_excerpt: |  # last ~20 lines of relevant output\n"
@@ -1185,7 +1190,7 @@ class Orchestrator:
         # IMPLEMENT
         console.print("[bold]-> IMPLEMENT (Claude Code)[/bold]")
         with console.status("Running Claude Code..."):
-            iy = await self.implement.run(task_path.read_text(encoding="utf-8"), iter_dir, self.cfg)
+            iy = await self.implement.run(task_path.read_text(encoding="utf-8"), iter_dir, src_dir, self.cfg)
         console.print(f"[green]Status:[/green] {iy.get('status', 'unknown')}")
 
         # UPDATE
@@ -1280,7 +1285,7 @@ class Orchestrator:
 
     async def _async_run_loop(self) -> None:
         if not (self.root / "goal.md").exists():
-            console.print("[red]No goal.md. Run: python orchestrator.py init[/red]")
+            console.print("[red]No goal.md. Run: python orchestrator.py --project <dir> init[/red]")
             sys.exit(1)
 
         state_text = ""
@@ -1345,7 +1350,7 @@ class Orchestrator:
   - Few-Shot-Inhalte: fiktiver WikiText-103 Forschungslauf (domainagnostisch).
     Für Domänen-Spezifik: system_glossary.md anlegen.
   - Gemini-Kosten-Schätzung: 2.5 Pro Preise (Stand 2025). Kann abweichen.
-  - Claude Agent SDK: async query()-API, cwd = archive/iter_NNN/code/.
+  - Claude Agent SDK: async query()-API, cwd = src/ (persistent across iterations).
     permission_mode "bypassPermissions" nur bei dangerously_skip_permissions=true.
   - Token-Schätzung: 1 Token ≈ 4 Zeichen (Gemini-Konvention).
 """)
@@ -1374,6 +1379,7 @@ def _auto_init_for_dryrun(root: Path, orch: Orchestrator) -> None:
     orch._write_if_missing("experiment_log.md", _LOG_TEMPLATE)
     orch._write_if_missing(".gitignore", _GITIGNORE)
     (root / "archive").mkdir(exist_ok=True)
+    (root / "src").mkdir(exist_ok=True)
     if not orch.git.is_repo(root):
         subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True)
     orch.git.commit(root, "init: project scaffold")
@@ -1381,18 +1387,21 @@ def _auto_init_for_dryrun(root: Path, orch: Orchestrator) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="RDF v3 Orchestrator")
+    parser.add_argument(
+        "--project", type=Path, default=None,
+        help="Path to research project directory (default: current directory)",
+    )
     sub = parser.add_subparsers(dest="cmd")
-    sub.add_parser("init", help="Initialise this directory as an RDF lab")
+    sub.add_parser("init", help="Initialise the project directory as an RDF lab")
     rp = sub.add_parser("run", help="Run the research loop")
     rp.add_argument("--dry-run", action="store_true", help="Mock agents, no API calls")
-    rp.add_argument("--root", type=Path, default=Path("."))
     args = parser.parse_args()
 
     if args.cmd is None:
         parser.print_help()
         sys.exit(0)
 
-    root = getattr(args, "root", Path(".")).resolve()
+    root = (args.project if args.project else Path(".")).resolve()
     cfg = Config.load(root / "config.toml")
     dry_run = getattr(args, "dry_run", False)
     orch = Orchestrator(root, cfg, dry_run=dry_run)
