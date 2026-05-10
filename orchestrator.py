@@ -41,9 +41,14 @@ console = Console(highlight=False, legacy_windows=False)
 
 def _patch_claude_sdk() -> None:
     """Make claude_code_sdk yield None for unknown message types (e.g. rate_limit_event)
-    instead of raising MessageParseError, so the stream continues uninterrupted."""
+    instead of raising MessageParseError, so the stream continues uninterrupted.
+
+    client.py imports parse_message with 'from .message_parser import parse_message',
+    creating its own reference. We must patch BOTH the module attribute AND the name
+    in client's namespace for the replacement to take effect.
+    """
     try:
-        from claude_code_sdk._internal import message_parser  # type: ignore
+        from claude_code_sdk._internal import message_parser, client as _sdk_client  # type: ignore
         from claude_code_sdk._errors import MessageParseError  # type: ignore
         _orig = message_parser.parse_message
 
@@ -54,6 +59,7 @@ def _patch_claude_sdk() -> None:
                 return None  # Unknown type – caller skips None
 
         message_parser.parse_message = _safe_parse
+        _sdk_client.parse_message = _safe_parse  # overwrite the already-imported reference
     except Exception:
         pass  # Fail silently if SDK internals change
 
