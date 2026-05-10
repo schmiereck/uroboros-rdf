@@ -1,0 +1,7 @@
+.rdf_cache.json
+archive/*/raw/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/

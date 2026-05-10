@@ -1,0 +1,31 @@
+[models]
+strategy = "gemini-2.5-pro"
+implementation_cli = "claude"
+
+[claude_code]
+# Granulare Tool-Freigabe für den Implementierungs-Agenten.
+allowed_tools = "Read,Write,Edit,Bash"
+# Bei true wird permission_mode="bypassPermissions" gesetzt (Claude Agent SDK).
+# User ist immer in der Loop und kann Strg+C drücken.
+dangerously_skip_permissions = false
+
+[limits]
+max_iterations = 100
+max_state_tokens = 8000           # Hard-Limit für current_state.md (Tokens)
+strategy_timeout_sec = 180
+experiment_timeout_sec = 14400    # 4 h; null = unbegrenzt
+max_retries_on_parse_fail = 2
+max_retries_on_state_too_long = 2
+
+[cache]
+ttl_hours = 6
+# Gemini 2.5 Pro: min 32 768 Tokens für Cached Content.
+# Bei kleinerem Stable-Payload wird der System-Prompt aufgefüllt.
+min_cache_tokens = 32768
+
+[git]
+auto_commit = true
+session_branch = false
+
+[ui]
+verbose = true
