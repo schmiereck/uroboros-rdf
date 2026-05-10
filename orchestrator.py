@@ -1209,11 +1209,16 @@ class Orchestrator:
             n = _read_iter_num(self.root) + (0 if retry else 1)
             sy, iy, cost = await self._run_iteration(n, hint, chosen_q)
 
-            # Auto-stop dry-run after 3 iterations
-            if self.dry_run and n >= 3:
-                console.print("[bold green]Dry-run complete (3 iterations).[/bold green]")
-                self._acceptance_report()
-                return
+            if self.dry_run:
+                if n >= 3:
+                    console.print("[bold green]Dry-run complete (3 iterations).[/bold green]")
+                    self._acceptance_report()
+                    return
+                # auto-advance without menu
+                hint = None
+                chosen_q = None
+                retry = False
+                continue
 
             choice, hint, chosen_q = self._menu(n, sy, iy, cost)
             retry = choice == "r"
