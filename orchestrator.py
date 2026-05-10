@@ -864,15 +864,20 @@ class ImplementAgent:
         errors: list[str] = []
 
         async def _stream() -> None:
-            async for msg in query(prompt=task_text, options=options):
-                if msg is None:
-                    continue  # rate_limit_event or other unknown type – patched to None
-                if hasattr(msg, "content"):
-                    for block in msg.content:
-                        if hasattr(block, "text"):
-                            collected.append(block.text)
-                if getattr(msg, "is_error", False):
-                    errors.append(str(getattr(msg, "error", msg)))
+            try:
+                async for msg in query(prompt=task_text, options=options):
+                    if msg is None:
+                        continue  # rate_limit_event or other unknown type – patched to None
+                    if hasattr(msg, "content"):
+                        for block in msg.content:
+                            if hasattr(block, "text"):
+                                collected.append(block.text)
+                    if getattr(msg, "is_error", False):
+                        errors.append(str(getattr(msg, "error", msg)))
+            except Exception as exc:
+                # SDK subprocess crashed (e.g. exit code 1, auth error, OOM).
+                # Capture as error so the orchestrator can continue rather than crash.
+                errors.append(f"SDK error: {exc}")
 
         project_root = src_dir.parent
         try:
