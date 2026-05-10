@@ -104,3 +104,45 @@ status: ok
 
 **Metrics:** `{'mock_value': 4.5}`
 
+
+---
+```yaml
+cached_tokens: 31883
+cost_usd: 0.04384
+hypothesis: 'baseline: The formal filter identifies at least one non-trivial, reversible,
+  bit-conserving rule for a 1D, 3-bit neighborhood.'
+input_tokens: 32587
+iter: 6
+metrics: {}
+output_tokens: 1284
+status: code_error
+```
+
+## iter_006: baseline: The formal filter identifies at least one non-trivial, reversible, bit-conserving rule for a 1D, 3-bit neighborhood.
+
+**Analysis:** We are in the Orientation phase, starting from iteration 1. The provided logs and state are mocks from a different project and will be ignored.
+
+The research goal is to discover emergent physics from simple, local, reversible rules on a discrete lattice. The strategic plan correctly identifies the first step: validating the core constraints in a 1D environment (Phase 1). Before we can test for gliders, oscillations, or any complex behaviour, we must first prove that our constraints (reversibility and bit-conservation) permit the existence of any non-trivial dynamics at all.
+
+Therefore, the minimal validating step is to build and run the "Formaler Filter" for the simplest case: a 1D, 3-bit neighborhood (a cell and its left/right neighbors). This experiment will either produce the first candidate "Naturkonstanten" or refute our initial assumptions about the rule constraints.
+
+**Task:** Create a Python script `archive/iter_001/code/generate_rules.py`.
+
+This script must:
+1. Define the state space for a 1D, 3-bit neighborhood (8 states from '000' to '111').
+2. A "rule" is a permutation of these 8 states. The script must iterate through permutations that satisfy the bit-conservation constraint: the Hamming weight of an input state must equal the Hamming weight of its corresponding output state. (e.g., all states with weight 1 can only be permuted among themselves).
+3. Filter out and count "trivial" rules:
+    - The identity rule (every state maps to itself).
+    - The global-shift rule (equivalent to shifting the entire lattice left or right, e.g., '101' -> '010').
+4. Write all valid, non-trivial rules found to `archive/iter_001/results/valid_rules.json`. Each rule should be represented as a map from input state (string) to output state (string).
+5. Write a summary of the findings to `archive/iter_001/result.yaml`, including these keys:
+    - `total_bit_conserving_permutations`
+    - `trivial_rules_found`
+    - `nontrivial_rules_found`
+
+**Status:** code_error
+
+**Experimenter view:** No YAML block found in output.
+
+**Metrics:** `{}`
+

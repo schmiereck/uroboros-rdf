@@ -1,0 +1,6 @@
+artifacts: []
+experimenter_view: No YAML block found in output.
+log_excerpt: ''
+metrics: {}
+notes: Parse failed – check stdout.txt
+status: code_error
