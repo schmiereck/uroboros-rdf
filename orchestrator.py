@@ -1427,6 +1427,70 @@ class Orchestrator:
                 return raw, hint, chosen_q
             console.print("[yellow]Unbekannte Eingabe.[/yellow]")
 
+    # ── startup menu (no API call needed) ────────────────────────────────────
+
+    def _startup_menu(self, last_n: int) -> tuple[str, Optional[str]]:
+        """Show a pre-flight menu based on persisted files. Returns (choice, hint)."""
+        # Read last iteration summary from experiment_log
+        last_hypothesis = ""
+        last_status = ""
+        last_metrics: dict = {}
+        log_path = self.root / "experiment_log.md"
+        if log_path.exists():
+            try:
+                blocks = re.findall(
+                    r"```yaml\s*\n(.*?)```", log_path.read_text(encoding="utf-8"), re.DOTALL
+                )
+                if blocks:
+                    last_entry = yaml.safe_load(blocks[-1]) or {}
+                    last_hypothesis = last_entry.get("hypothesis", "")
+                    last_status = last_entry.get("status", "")
+                    last_metrics = last_entry.get("metrics", {})
+            except Exception:
+                pass
+
+        # Read state summary
+        state_summary = ""
+        state_path = self.root / "current_state.md"
+        if state_path.exists():
+            for line in state_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    state_summary = stripped[:120] + ("…" if len(stripped) > 120 else "")
+                    break
+
+        status_color = "green" if last_status == "ok" else ("red" if last_status == "code_error" else "yellow")
+        console.print()
+        console.print(Panel(
+            f"[bold]Letzte Iteration:[/bold] {last_n:03d}/{self.cfg.max_iterations}\n"
+            f"[bold]Hypothese:[/bold]       {last_hypothesis}\n"
+            f"[bold]Status:[/bold]          [{status_color}]{last_status}[/{status_color}]\n"
+            f"[bold]Metriken:[/bold]        {last_metrics}\n"
+            + (f"[dim]{state_summary}[/dim]" if state_summary else ""),
+            title="[bold blue]── RDF BEREIT ──[/bold blue]",
+        ))
+        console.print(
+            "\n[bold]Aktionen[/bold] – Buchstabe(n) + Enter:\n"
+            "  y      Naechste Iteration starten\n"
+            "  a      Autonom laufen (pausiert bei Milestone / Fehler / Schleife)\n"
+            "  h      Hinweis an Gemini, dann starten\n"
+            "  s      git log anzeigen\n"
+            "  n      Beenden\n",
+            markup=False,
+        )
+
+        while True:
+            raw = console.input("[bold]Eingabe:[/bold] ").strip().lower()
+            if raw == "s":
+                console.print(f"\n{self.git.log_oneline(self.root)}", markup=False)
+                continue
+            if raw == "h":
+                hint = console.input("Hinweis an Gemini: ").strip() or None
+                return "y", hint
+            if raw in ("y", "a", "n"):
+                return raw, None
+            console.print("[yellow]Unbekannte Eingabe.[/yellow]")
+
     # ── main loop ─────────────────────────────────────────────────────────────
 
     async def _async_run_loop(self) -> None:
@@ -1463,6 +1527,20 @@ class Orchestrator:
         autonomous_mode = False
         consecutive_errors = 0
         last_hypothesis = ""
+
+        # Show startup menu when resuming an existing run (no API call needed)
+        if not self.dry_run:
+            last_n = _read_iter_num(self.root)
+            if last_n > 0:
+                start_choice, hint = self._startup_menu(last_n)
+                if start_choice == "n":
+                    return
+                if start_choice == "a":
+                    autonomous_mode = True
+                    console.print(
+                        "[bold cyan]Autonomer Modus – naechste Pause bei Milestone, "
+                        "2 Fehlern in Folge oder Hypothesen-Schleife.[/bold cyan]"
+                    )
 
         for _ in range(self.cfg.max_iterations):
             n = _read_iter_num(self.root) + (0 if retry else 1)
