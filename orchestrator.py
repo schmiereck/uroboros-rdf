@@ -180,9 +180,14 @@ expected_outcome: "What would confirm/refute this hypothesis"
 success_criteria:
   - "Measurable criterion 1"
   - "Measurable criterion 2"
-milestone_reached: ""  # Optional. If this iteration completes a milestone from the
-                       # research goal (e.g. "Phase 1: 1D-Symmetrie-Sieber"), write
-                       # its exact name here. Leave empty string if no milestone.
+milestone_reached: ""  # Optional. Name of a completed milestone from the research
+                       # goal (e.g. "Phase 1: 1D-Symmetrie-Sieber"). Leave empty
+                       # if no milestone was completed this iteration.
+user_question: ""     # Optional. A specific question that REQUIRES the researcher's
+                       # answer before the next iteration can be planned meaningfully.
+                       # Use sparingly – only when you genuinely cannot decide between
+                       # two directions without human guidance. The researcher's answer
+                       # will be passed back to you as a hint. Leave empty otherwise.
 state_update: |
   Complete replacement text for current_state.md. Self-contained.
   Start with a one-line "Phase: <current phase name>" for easy scanning.
@@ -193,6 +198,11 @@ Milestone detection: After each iteration, compare your `state_update` against t
 milestones listed in the research goal. If all success criteria for a milestone are
 met by the accumulated evidence, set `milestone_reached` to the milestone's name.
 This triggers a git tag and a highlighted summary for the researcher.
+
+user_question guidance: Only set this when you face a genuine fork where both paths
+are scientifically valid but lead to very different experiments, and the researcher's
+priorities (not the data) should decide. Do NOT use it as a default after every
+iteration – that defeats the purpose of autonomous operation.
 
 ---
 
@@ -1351,6 +1361,20 @@ class Orchestrator:
                 f"\n[bold green]Milestone erreicht: {milestone}[/bold green]  "
                 f"(git tag: milestone-{re.sub(r'[^a-z0-9]+', '-', milestone.lower()).strip('-')})"
             )
+        # ── Gemini's blocking question (asked before menu options) ──────────────
+        user_q = (sy.get("user_question") or "").strip()
+        pending_hint: Optional[str] = None
+        if user_q:
+            console.print(Panel(
+                f"[bold magenta]Gemini fragt:[/bold magenta]\n\n{user_q}\n\n"
+                "[dim]Deine Antwort wird als Hinweis an die naechste Iteration weitergegeben.[/dim]",
+                title="[bold magenta]── RUECKFRAGE ──[/bold magenta]",
+                border_style="magenta",
+            ))
+            answer = console.input("[bold magenta]Deine Antwort[/bold magenta] (Enter = ueberspringen): ").strip()
+            if answer:
+                pending_hint = answer
+
         if open_qs:
             console.print("\n[bold]Forschungsrichtungen, die Gemini erkunden will:[/bold]")
             for i, q in enumerate(open_qs, 1):
@@ -1362,8 +1386,8 @@ class Orchestrator:
             "  y      Naechste Iteration (Gemini waehlt Richtung)\n"
             + o_hint +
             "  a      Autonom laufen (pausiert bei Milestone / Fehler / Schleife)\n"
-            "  h      Hinweis an Gemini fuer naechste Iteration\n"
-            "  r      Iteration wiederholen (mit neuem Hinweis)\n"
+            "  h      Zusaetzlicher Hinweis an Gemini\n"
+            "  r      Iteration wiederholen (mit Hinweis)\n"
             "  d      git diff --stat HEAD~1\n"
             "  s      Status-Bericht (git log)\n"
             "  n      Stoppen und speichern\n",
@@ -1373,7 +1397,7 @@ class Orchestrator:
         while True:
             raw = console.input("[bold]Eingabe:[/bold] ").strip().lower()
 
-            hint: Optional[str] = None
+            hint: Optional[str] = pending_hint  # carry forward question answer
             chosen_q: Optional[str] = None
 
             # o<N>: one-step research direction focus
@@ -1394,7 +1418,9 @@ class Orchestrator:
                 console.print(f"\n[bold]git log:[/bold]\n{self.git.log_oneline(self.root)}")
                 continue
             if raw in ("h", "r"):
-                hint = console.input("Hinweis an Gemini: ").strip()
+                extra = console.input("Hinweis an Gemini: ").strip()
+                # Merge with any pending answer from user_question
+                hint = "\n".join(filter(None, [pending_hint, extra])) or None
                 if raw == "h":
                     raw = "y"
             if raw in ("y", "r", "n", "a"):
@@ -1458,9 +1484,12 @@ class Orchestrator:
 
             if autonomous_mode:
                 consecutive_errors = consecutive_errors + 1 if status == "code_error" else 0
+                user_q = (sy.get("user_question") or "").strip()
 
                 pause_reason: Optional[str] = None
-                if milestone:
+                if user_q:
+                    pause_reason = f"[bold magenta]Gemini hat eine Rueckfrage.[/bold magenta]"
+                elif milestone:
                     pause_reason = f"[bold green]Milestone erreicht: {milestone}[/bold green]"
                 elif consecutive_errors >= 2:
                     pause_reason = (
