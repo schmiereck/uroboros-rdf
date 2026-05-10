@@ -158,16 +158,25 @@ hypothesis: "One-line falsifiable hypothesis (becomes git commit message)"
 rationale: "Why this hypothesis is the right next step"
 task_for_implementer: |
   Concrete, executable task for the implementation agent.
-  Include: what files to create, what to run, what metrics to collect.
-  Working directory is archive/iter_NNN/code/.
+  Include: what files to create/modify in src/, what to run, what metrics to collect.
+  Results go to archive/iter_NNN/results/. Working directory is src/ (persistent).
 expected_outcome: "What would confirm/refute this hypothesis"
 success_criteria:
   - "Measurable criterion 1"
   - "Measurable criterion 2"
+milestone_reached: ""  # Optional. If this iteration completes a milestone from the
+                       # research goal (e.g. "Phase 1: 1D-Symmetrie-Sieber"), write
+                       # its exact name here. Leave empty string if no milestone.
 state_update: |
   Complete replacement text for current_state.md. Self-contained.
+  Start with a one-line "Phase: <current phase name>" for easy scanning.
   Keep concise (≤ MAX_STATE_TOKENS).
 ```
+
+Milestone detection: After each iteration, compare your `state_update` against the
+milestones listed in the research goal. If all success criteria for a milestone are
+met by the accumulated evidence, set `milestone_reached` to the milestone's name.
+This triggers a git tag and a highlighted summary for the researcher.
 
 ---
 
@@ -197,11 +206,12 @@ rationale: |
   Before testing schedules we need a number to beat. lr=1e-4 is the
   well-tested default; this validates the pipeline and anchors comparisons.
 task_for_implementer: |
-  Create archive/iter_001/code/train.py that trains a 6-layer transformer
+  Create src/train.py that trains a 6-layer transformer
   (d_model=256, nhead=8, ffn=1024) on WikiText-103 (HuggingFace datasets),
   AdamW lr=1e-4 weight_decay=0.01, cosine LR, 10 000 steps, batch=32,
   seq_len=512, seed=42. Log val_loss every 500 steps to val_loss.csv.
-  Write final val_loss to archive/iter_001/result.yaml.
+  Write final val_loss to archive/iter_001/results/val_loss.csv and include it
+  in the required YAML block at the end of your response.
 expected_outcome: "val_loss between 2.8–3.5. Smooth decreasing loss curve."
 success_criteria:
   - "val_loss is finite (no NaN/Inf)"
@@ -1255,9 +1265,16 @@ class Orchestrator:
         # GIT COMMIT
         if self.cfg.auto_commit:
             msg = f"iter_{n:03d}: {hypothesis}"
+            milestone = (sy.get("milestone_reached") or "").strip()
+            if milestone:
+                msg += f"\n\n[milestone] {milestone}"
             if hint:
                 msg += f"\n\n[hint] {hint}"
             self.git.commit(self.root, msg)
+            if milestone:
+                tag = "milestone-" + re.sub(r"[^a-z0-9]+", "-", milestone.lower()).strip("-")
+                self.git.tag(self.root, tag)
+                console.print(f"[bold green]Milestone tagged: {tag}[/bold green]")
             if hypothesis.startswith("[CONVERGED]"):
                 self.git.tag(self.root, f"converged-{n:03d}")
                 console.print(f"[bold green]Converged – tagged converged-{n:03d}[/bold green]")
@@ -1275,14 +1292,41 @@ class Orchestrator:
         self, n: int, sy: dict, iy: dict, cost: float
     ) -> tuple[str, Optional[str], Optional[str]]:
         open_qs = sy.get("open_questions", [])
-        console.print()
-        console.print(Panel(
+        milestone = (sy.get("milestone_reached") or "").strip()
+
+        # Read first non-empty paragraph from current_state.md for the status line
+        state_summary = ""
+        state_path = self.root / "current_state.md"
+        if state_path.exists():
+            raw_state = state_path.read_text(encoding="utf-8")
+            for line in raw_state.splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    state_summary = stripped[:120] + ("…" if len(stripped) > 120 else "")
+                    break
+
+        milestone_line = (
+            f"\n[bold green]MILESTONE:[/bold green] {milestone}" if milestone else ""
+        )
+        panel_body = (
+            f"[bold]Iteration:[/bold] {n}/{self.cfg.max_iterations}"
+            + milestone_line + "\n"
             f"[bold]Hypothese:[/bold] {sy.get('hypothesis', '')}\n"
             f"[bold]Status:[/bold]    {iy.get('status', 'unknown')}\n"
             f"[bold]Metriken:[/bold]  {iy.get('metrics', {})}\n"
-            f"[bold]Kosten:[/bold]    ~${cost:.4f} | Session ~${self.session_cost:.4f}",
-            title=f"[bold blue]── ITERATION {n:03d} ABGESCHLOSSEN ──[/bold blue]",
+            f"[bold]Kosten:[/bold]    ~${cost:.4f} | Session ~${self.session_cost:.4f}\n"
+            + (f"[dim]{state_summary}[/dim]" if state_summary else "")
+        )
+        title_color = "bold green" if milestone else "bold blue"
+        console.print()
+        console.print(Panel(panel_body,
+            title=f"[{title_color}]── ITERATION {n:03d} ABGESCHLOSSEN ──[/{title_color}]",
         ))
+        if milestone:
+            console.print(
+                f"\n[bold green]Milestone erreicht: {milestone}[/bold green]  "
+                f"(git tag: milestone-{re.sub(r'[^a-z0-9]+', '-', milestone.lower()).strip('-')})"
+            )
         if open_qs:
             console.print("\n[bold]Forschungsrichtungen, die Gemini erkunden will:[/bold]")
             for i, q in enumerate(open_qs, 1):
