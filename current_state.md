@@ -1,19 +1,20 @@
 # Current Research State
 
 ## 1. Goal
-Demonstrate that complex physical phenomena (mass, gravity, time) can emerge from minimal, local, reversible rules on a discrete, symmetric lattice (digital physics).
+Demonstrate that complex physical phenomena can emerge from minimal, local, reversible rules on a discrete, symmetric lattice.
 
 ## 2. Status
 **Phase 1: Der 1D-Symmetrie-Sieber (Orientation)**
-We are at the beginning. No experiments have been completed. The immediate goal is to establish the foundational components of the research pipeline and validate the core assumptions.
+We are proceeding to the second step of Phase 1. The first step successfully identified the set of possible "physics" for our 1D universe. Now we must test which of these physics produce interesting dynamics.
 
-## 3. Methodology
-The project follows a hierarchical scaling approach:
-- **1D:** Validate basic conservation laws and glider stability.
-- **2D (Hex):** Validate interaction/scattering logic.
-- **3D (Cuboctahedron / FCC):** Scale to full target geometry and investigate emergent 3D+1 phenomena.
-
-A three-stage filter (Formal -> AI -> GA) will be used to search the rule space.
+## 3. Confirmed
+- **Existence of Valid Rules:** There are exactly 33 non-trivial, reversible, bit-conserving rules for a 1D, 3-bit neighborhood (iter_001, formerly iter_009). This confirms our foundational assumption.
 
 ## 4. In Progress
-- **iter_001:** Implement and run the "Formaler Filter" to find all non-trivial, reversible, bit-conserving rules for the simplest case: a 1D, 3-bit neighborhood. This is a baseline to confirm that such rules exist.
+- **iter_002:** Simulating all 33 candidate rules on a 1D lattice to detect which ones can produce stable, propagating patterns (gliders) from a simple single-bit initial condition.
+
+## 5. Open Questions
+- Which of the 33 candidate rules produce stable, propagating gliders?
+- What is the simplest initial condition required to generate a glider?
+- How can we classify the emergent behavior of the 33 rules?
+- What is the distribution of glider velocities across the rule set?

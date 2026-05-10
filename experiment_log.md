@@ -245,3 +245,72 @@ non-trivial reversible bit-conserving rules remain. Results saved to valid_rules
 
 **Metrics:** `{'total_bit_conserving_permutations': 36, 'trivial_rules_found': 3, 'nontrivial_rules_found': 33}`
 
+
+---
+```yaml
+cached_tokens: 32545
+cost_usd: 0.05442
+hypothesis: 'dynamics: At least one of the 33 candidate rules produces a stable, propagating
+  pattern (glider) from a single-bit initial condition.'
+input_tokens: 35470
+iter: 10
+metrics:
+  chaotic_found: 0
+  decay_found: 0
+  gliders_found: 22
+  periodic_found: 0
+  rules_tested: 33
+  stable_found: 11
+output_tokens: 1496
+status: ok
+```
+
+## iter_010: dynamics: At least one of the 33 candidate rules produces a stable, propagating pattern (glider) from a single-bit initial condition.
+
+**Analysis:** The foundational hypothesis was confirmed in the previous iteration (logged as iter_009): 33 non-trivial, reversible, bit-conserving rules exist for the simplest 1D, 3-bit case. This is a major milestone and the successful completion of the first step of Phase 1.
+
+The research has now moved from a purely formal, mathematical question ("Do such rules exist?") to an empirical one ("What do these rules do?"). According to the master plan, the goal of Phase 1 is to find rules that "allow simple movement". Therefore, the immediate next step is to simulate these 33 rules and observe their behavior. We need to build a basic 1D cellular automaton simulator to test if any of these rules can support stable, propagating patterns (gliders or solitons). This is the minimal validating step to determine if our rule set has the potential for complex dynamics.
+
+**Task:** Create a Python script `archive/iter_002/code/simulate_rules.py`. This script will function as a 1D cellular automaton simulator.
+
+1.  **Input:** The script should load the `valid_rules.json` file from `archive/iter_001/results/`.
+2.  **Simulation Setup:** For each of the 33 rules in the file:
+    a. Initialize a 1D lattice of size 100 with all cells set to '0', except for a single '1' at the center (index 50). This is the initial condition.
+    b. Run the simulation for 200 steps with periodic boundary conditions.
+    c. In each step, for every cell, determine its new state by looking up the 3-bit neighborhood (left, self, right) in the current rule's mapping.
+3.  **Analysis & Classification:** After each simulation run, classify the rule's behavior based on the final state and history. A simple classification logic:
+    - `DECAY`: The lattice becomes all '0's.
+    - `STABLE`: The lattice stops changing before the final step.
+    - `PERIODIC`: The lattice enters a short, repeating cycle of states.
+    - `GLIDER`: A contiguous pattern of bits moves consistently in one direction. You can detect this by tracking the "center of mass" of the '1' bits. If the center of mass moves at a near-constant velocity and the pattern's width is stable, classify it as a glider.
+    - `CHAOTIC`: Anything else (e.g., expanding, complex, non-repeating patterns).
+4.  **Output:**
+    a. Create a directory `archive/iter_002/results/`.
+    b. For each rule identified as `GLIDER`, save the final lattice state to `archive/iter_002/results/glider_rule_[RULE_INDEX].txt`.
+    c. Write a summary file `archive/iter_002/result.yaml` with the following keys:
+       - `rules_tested`: 33
+       - `gliders_found`: (count of rules classified as GLIDER)
+       - `stable_found`: (count)
+       - `periodic_found`: (count)
+       - `decay_found`: (count)
+       - `chaotic_found`: (count)
+       - `glider_rule_indices`: (a list of indices for the rules that produced gliders)
+
+**Status:** ok
+
+**Experimenter view:** Hypothesis confirmed strongly: 22 of 33 rules (67%) produce gliders from a single-bit
+initial condition. The gliders fall into two symmetric groups — rules 5–16 produce
+right-moving gliders (velocity +1/step) and rules 17–26 produce left-moving gliders
+(velocity -1/step). The remaining 11 rules (0–4 and 27–32) are STABLE, meaning the
+single '1' stays fixed.
+
+This outcome is analytically predicted by the bit-conserving structure: the three
+single-bit neighborhoods {001, 010, 100} are always permuted among themselves by each
+rule. Exactly ONE of them maps to "010" (whose center bit is 1). If rule["100"]="010",
+the bit shifts right (glider); if rule["001"]="010", it shifts left; if rule["010"]="010",
+it stays (stable). No DECAY, PERIODIC, or CHAOTIC behavior is possible with a
+single-bit initial condition under these rules.
+
+
+**Metrics:** `{'rules_tested': 33, 'gliders_found': 22, 'stable_found': 11, 'periodic_found': 0, 'decay_found': 0, 'chaotic_found': 0}`
+

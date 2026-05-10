@@ -1,8 +1,29 @@
-artifacts:
-- archive/iter_002/code/run.py
-experimenter_view: '[Mock] Iteration 2 completed. No real computation.'
-log_excerpt: hello from iter 2
-metrics:
-  mock_value: 3.0
-notes: '[Mock] dry-run'
-status: ok
+rules_tested: 33
+gliders_found: 22
+stable_found: 11
+periodic_found: 0
+decay_found: 0
+chaotic_found: 0
+glider_rule_indices:
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  - 11
+  - 12
+  - 13
+  - 14
+  - 15
+  - 16
+  - 17
+  - 18
+  - 19
+  - 20
+  - 21
+  - 22
+  - 23
+  - 24
+  - 25
+  - 26
