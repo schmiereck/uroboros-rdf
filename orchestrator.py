@@ -1361,6 +1361,7 @@ class Orchestrator:
             "\n[bold]Aktionen[/bold] – Buchstabe(n) + Enter:\n"
             "  y      Naechste Iteration (Gemini waehlt Richtung)\n"
             + o_hint +
+            "  a      Autonom laufen (pausiert bei Milestone / Fehler / Schleife)\n"
             "  h      Hinweis an Gemini fuer naechste Iteration\n"
             "  r      Iteration wiederholen (mit neuem Hinweis)\n"
             "  d      git diff --stat HEAD~1\n"
@@ -1396,7 +1397,7 @@ class Orchestrator:
                 hint = console.input("Hinweis an Gemini: ").strip()
                 if raw == "h":
                     raw = "y"
-            if raw in ("y", "r", "n"):
+            if raw in ("y", "r", "n", "a"):
                 return raw, hint, chosen_q
             console.print("[yellow]Unbekannte Eingabe.[/yellow]")
 
@@ -1433,6 +1434,9 @@ class Orchestrator:
         hint: Optional[str] = None
         chosen_q: Optional[str] = None
         retry = False
+        autonomous_mode = False
+        consecutive_errors = 0
+        last_hypothesis = ""
 
         for _ in range(self.cfg.max_iterations):
             n = _read_iter_num(self.root) + (0 if retry else 1)
@@ -1443,20 +1447,69 @@ class Orchestrator:
                     console.print("[bold green]Dry-run complete (3 iterations).[/bold green]")
                     self._acceptance_report()
                     return
-                # auto-advance without menu
                 hint = None
                 chosen_q = None
                 retry = False
                 continue
 
+            status = iy.get("status", "unknown")
+            milestone = (sy.get("milestone_reached") or "").strip()
+            hypothesis = sy.get("hypothesis", "")
+
+            if autonomous_mode:
+                consecutive_errors = consecutive_errors + 1 if status == "code_error" else 0
+
+                pause_reason: Optional[str] = None
+                if milestone:
+                    pause_reason = f"[bold green]Milestone erreicht: {milestone}[/bold green]"
+                elif consecutive_errors >= 2:
+                    pause_reason = (
+                        f"[bold red]{consecutive_errors} Fehler in Folge – bitte pruefen.[/bold red]"
+                    )
+                elif hypothesis and hypothesis == last_hypothesis:
+                    pause_reason = (
+                        "[bold yellow]Gemini wiederholt die letzte Hypothese – "
+                        "moegliche Schleife, Eingabe erforderlich.[/bold yellow]"
+                    )
+
+                last_hypothesis = hypothesis
+
+                if pause_reason is None:
+                    # All good – continue without user input
+                    hint = None
+                    chosen_q = None
+                    retry = False
+                    continue
+
+                # ── Break out of autonomous mode ──
+                autonomous_mode = False
+                consecutive_errors = 0
+                console.rule("[bold yellow]AUTONOMER MODUS PAUSIERT[/bold yellow]")
+                console.print(pause_reason)
+                # Fall through to interactive menu below
+
+            last_hypothesis = hypothesis
+
             choice, hint, chosen_q = self._menu(n, sy, iy, cost)
             retry = choice == "r"
+
+            if choice == "a":
+                autonomous_mode = True
+                consecutive_errors = 0
+                retry = False
+                hint = None
+                chosen_q = None
+                console.print(
+                    "[bold cyan]Autonomer Modus – naechste Pause bei Milestone, "
+                    "2 Fehlern in Folge oder Hypothesen-Schleife.[/bold cyan]"
+                )
+                continue
 
             if choice == "n":
                 console.print("[bold]Gestoppt.[/bold]")
                 break
 
-            if sy.get("hypothesis", "").startswith("[CONVERGED]"):
+            if hypothesis.startswith("[CONVERGED]"):
                 console.print("[bold green]Loop konvergiert.[/bold green]")
                 break
 
