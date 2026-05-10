@@ -191,3 +191,57 @@ The immediate and only priority is to successfully execute this first experiment
 
 **Metrics:** `{}`
 
+
+---
+```yaml
+cached_tokens: 32322
+cost_usd: 0.05016
+hypothesis: 'baseline: The formal filter identifies at least one non-trivial, reversible,
+  bit-conserving rule for a 1D, 3-bit neighborhood.'
+input_tokens: 34399
+iter: 9
+metrics:
+  nontrivial_rules_found: 33
+  total_bit_conserving_permutations: 36
+  trivial_rules_found: 3
+output_tokens: 1391
+status: ok
+```
+
+## iter_009: baseline: The formal filter identifies at least one non-trivial, reversible, bit-conserving rule for a 1D, 3-bit neighborhood.
+
+**Analysis:** We are at the very beginning of the project (Phase 1, Orientation). The provided logs contain mock data and two failed attempts (`iter_006`, `iter_008`) to execute the first critical experiment. Both attempts resulted in `code_error`, meaning we have not yet gathered any data.
+
+The project's entire foundation rests on the assumption that non-trivial rules satisfying our constraints (reversibility, bit-conservation, locality) actually exist. The immediate and only priority is to validate this assumption. We must successfully execute the "Formaler Filter" for the simplest possible case: a 1D, 3-bit neighborhood. This is the minimal validating step.
+
+I am re-initiating this first experiment as `iter_001` to establish a clean, canonical history for this research. The hypothesis remains unchanged from the failed attempts, as it has not yet been tested.
+
+**Task:** Create a Python script `archive/iter_001/code/generate_rules.py`. The script must be robust and not fail if no rules are found.
+
+1.  **Define State Space**: The 8 states of a 3-bit neighborhood ('000' to '111').
+2.  **Group by Hamming Weight**: Group states by the number of '1's.
+    - W0: {'000'}
+    - W1: {'001', '010', '100'}
+    - W2: {'011', '101', '110'}
+    - W3: {'111'}
+3.  **Generate Rule Permutations**: A rule is a combination of permutations *within* each weight group. Iterate through all combinations of these intra-group permutations.
+    - Example: `(Permutation of W0) x (Permutation of W1) x (Permutation of W2) x (Permutation of W3)`
+4.  **Filter Trivial Rules**: A rule is trivial if it is one of the following:
+    - **Identity**: `rule[state] == state` for all 8 states.
+    - **Shift Left**: The rule's effect is identical to a circular left bit shift for all 8 states. E.g., for state 'abc', the output is 'bca'. ('101' -> '011').
+    - **Shift Right**: The rule's effect is identical to a circular right bit shift for all 8 states. E.g., for state 'abc', the output is 'cab'. ('101' -> '110').
+5.  **Write Outputs**:
+    - Create the directory `archive/iter_001/results/`.
+    - Save all valid, non-trivial rules found as a JSON list to `archive/iter_001/results/valid_rules.json`. Each item in the list is a dictionary mapping input states to output states.
+    - Write a summary to `archive/iter_001/result.yaml` with these exact keys, even if the counts are zero:
+
+**Status:** ok
+
+**Experimenter view:** The hypothesis is confirmed. 36 total bit-conserving permutations exist across the
+four Hamming-weight groups (W0: 1!, W1: 3!=6, W2: 3!=6, W3: 1!; product = 36).
+After removing the 3 trivial rules (identity, shift-left, shift-right), 33
+non-trivial reversible bit-conserving rules remain. Results saved to valid_rules.json.
+
+
+**Metrics:** `{'total_bit_conserving_permutations': 36, 'trivial_rules_found': 3, 'nontrivial_rules_found': 33}`
+
