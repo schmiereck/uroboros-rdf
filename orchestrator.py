@@ -1250,8 +1250,20 @@ class Orchestrator:
         # STRATEGY
         console.print("[bold]-> STRATEGY (Gemini)[/bold]")
         delta = self._delta_prompt(n, hint, chosen_q)
-        with console.status("Calling Gemini..."):
-            sy, usage = self.strategy.call(self.root, delta, self.cfg, hint, chosen_q)
+        try:
+            with console.status("Calling Gemini..."):
+                sy, usage = self.strategy.call(self.root, delta, self.cfg, hint, chosen_q)
+        except Exception as e:
+            console.print(f"[bold red]Strategy call failed: {e}[/bold red]")
+            sy = {"hypothesis": "strategy_error", "analysis": str(e), "state_update": ""}
+            iy = {"status": "code_error", "notes": f"Strategy call failed: {e}"}
+            cost = 0.0
+            _append_log(self.root, n, sy, iy, None, cost)
+            if self.cfg.auto_commit:
+                self.git.commit(self.root, f"iter_{n:03d}: [strategy_error]")
+                if self.cfg.auto_push:
+                    self.git.push(self.root)
+            return sy, iy, cost
 
         hypothesis = sy.get("hypothesis", "")
         console.print(f"[green]Hypothesis:[/green] {hypothesis}")
