@@ -245,11 +245,13 @@ Four tools are available for deeper access:
                                          completed (collapsed) campaign.
   read_iteration(iter_num)             – full record of one iteration:
                                          hypothesis, analysis, task, status,
-                                         metrics, experimenter view, plus the
-                                         list of result files available in
-                                         archive/iter_NNN/results/.
-  read_result_file(iter_num, filename) – reads a text result file (CSV, log,
-                                         txt) from archive/iter_NNN/results/.
+                                         metrics, experimenter view, plus a
+                                         list of ALL files anywhere under
+                                         archive/iter_NNN/ (incl. subdirs).
+  read_result_file(iter_num, filename) – reads a text file from anywhere under
+                                         archive/iter_NNN/. filename may be a
+                                         plain name or a sub-path such as
+                                         "population/rule_001.json".
                                          Files > 50 KB are truncated. Binary
                                          files are rejected. Call read_iteration
                                          first to see which files exist.
@@ -1153,7 +1155,8 @@ def _make_gemini_tools() -> list:
             description=(
                 "Returns the full record of a past iteration: hypothesis, analysis, "
                 "task, implementation status, metrics, experimenter observations, "
-                "and a list of result files available in archive/iter_NNN/results/."
+                "and a list of ALL files available anywhere under archive/iter_NNN/ "
+                "(including subdirectories such as population/, checkpoints/, etc.)."
             ),
             parameters=types.Schema(
                 type=types.Type.OBJECT,
@@ -1169,7 +1172,9 @@ def _make_gemini_tools() -> list:
         types.FunctionDeclaration(
             name="read_result_file",
             description=(
-                "Reads a text result file from archive/iter_NNN/results/. "
+                "Reads a text file from anywhere under archive/iter_NNN/. "
+                "filename may be a plain filename ('rules.csv') or a relative "
+                "sub-path ('population/rule_001.json'). "
                 "Use read_iteration first to see which files are available. "
                 "Binary files (images, pickles) cannot be read this way. "
                 "Files larger than 50 KB are truncated."
@@ -1183,7 +1188,10 @@ def _make_gemini_tools() -> list:
                     ),
                     "filename": types.Schema(
                         type=types.Type.STRING,
-                        description="Filename within archive/iter_NNN/results/ (e.g. 'rules.csv').",
+                        description=(
+                            "Relative path within archive/iter_NNN/ "
+                            "(e.g. 'rules.csv' or 'population/rule_001.json')."
+                        ),
                     ),
                 },
                 required=["iter_num", "filename"],
@@ -1257,14 +1265,21 @@ def _tool_read_iteration(root: Path, iter_num: int) -> str:
             if p.exists():
                 parts.append(f"## {fname}\n{p.read_text(encoding='utf-8')}")
         record = "\n\n".join(parts) if parts else f"No record found for iteration {iter_num}."
-    # Append list of result files so Gemini knows what can be read
-    results_dir = root / "archive" / f"iter_{iter_num:03d}" / "results"
-    if results_dir.is_dir():
-        files = sorted(f for f in results_dir.iterdir() if f.is_file())
-        if files:
-            lines = [f"\n\n## Result files in archive/iter_{iter_num:03d}/results/"]
-            for f in files:
-                lines.append(f"  {f.name}  ({f.stat().st_size:,} bytes)")
+    # List ALL files in archive/iter_NNN/ (recursively) so Gemini knows what
+    # can be read via read_result_file (which accepts relative paths like
+    # "population/rule_001.json").
+    iter_dir_path = root / "archive" / f"iter_{iter_num:03d}"
+    if iter_dir_path.is_dir():
+        skip = {"task.md", "result.yaml"}
+        all_files = sorted(
+            p for p in iter_dir_path.rglob("*")
+            if p.is_file() and p.name not in skip
+        )
+        if all_files:
+            lines = [f"\n\n## Files in archive/iter_{iter_num:03d}/"]
+            for f in all_files:
+                rel = f.relative_to(iter_dir_path)
+                lines.append(f"  {rel.as_posix()}  ({f.stat().st_size:,} bytes)")
             record += "\n".join(lines)
     return record
 
@@ -1273,14 +1288,23 @@ _MAX_RESULT_FILE_BYTES = 50_000
 
 
 def _tool_read_result_file(root: Path, iter_num: int, filename: str) -> str:
-    if "/" in filename or "\\" in filename or ".." in filename:
-        return "Error: filename must not contain path separators."
-    p = root / "archive" / f"iter_{iter_num:03d}" / "results" / filename
-    if not p.exists():
-        return f"File not found: archive/iter_{iter_num:03d}/results/{filename}"
-    if not p.is_file():
+    """Read a file from archive/iter_NNN/.  filename may be a relative path
+    such as 'population/rule_001.json' – any subdirectory is allowed as long
+    as the resolved path stays inside the iter directory."""
+    iter_dir = root / "archive" / f"iter_{iter_num:03d}"
+    try:
+        target = (iter_dir / filename).resolve()
+        base = iter_dir.resolve()
+    except Exception:
+        return "Error: invalid path."
+    # Path traversal guard: resolved target must start with resolved iter_dir
+    if not str(target).startswith(str(base) + ("/" if "/" in str(base) else "\\")):
+        return "Error: path traversal outside iteration directory is not allowed."
+    if not target.exists():
+        return f"File not found: archive/iter_{iter_num:03d}/{filename}"
+    if not target.is_file():
         return "Error: not a regular file."
-    raw = p.read_bytes()
+    raw = target.read_bytes()
     if b"\x00" in raw[:512]:
         return f"'{filename}' appears to be binary and cannot be read as text."
     text = raw.decode("utf-8", errors="replace")
