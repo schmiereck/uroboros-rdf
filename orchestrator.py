@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import signal
 import json
 import re
 import subprocess
@@ -1554,12 +1555,26 @@ class Orchestrator:
         consecutive_errors = 0
         last_hypothesis = ""
 
+        # Ctrl+C: set flag, finish current iteration, then stop cleanly
+        _stop_flag = [False]
+
+        def _handle_sigint(sig, frame):
+            if not _stop_flag[0]:
+                _stop_flag[0] = True
+                console.print(
+                    "\n[bold yellow]Ctrl+C – aktuelle Iteration wird noch abgeschlossen, "
+                    "dann Stopp.[/bold yellow]"
+                )
+
+        old_sigint = signal.signal(signal.SIGINT, _handle_sigint)
+
         # Show startup menu when resuming an existing run (no API call needed)
         if not self.dry_run:
             last_n = _read_iter_num(self.root)
             if last_n > 0:
                 start_choice, hint = self._startup_menu(last_n)
                 if start_choice == "n":
+                    signal.signal(signal.SIGINT, old_sigint)
                     return
                 if start_choice == "a":
                     autonomous_mode = True
@@ -1568,83 +1583,95 @@ class Orchestrator:
                         "2 Fehlern in Folge oder Hypothesen-Schleife.[/bold cyan]"
                     )
 
-        for _ in range(self.cfg.max_iterations):
-            n = _read_iter_num(self.root) + (0 if retry else 1)
-            sy, iy, cost = await self._run_iteration(n, hint, chosen_q)
+        try:
+            for _ in range(self.cfg.max_iterations):
+                n = _read_iter_num(self.root) + (0 if retry else 1)
+                try:
+                    sy, iy, cost = await self._run_iteration(n, hint, chosen_q)
+                except KeyboardInterrupt:
+                    console.print("\n[bold yellow]Ctrl+C – Iteration unterbrochen. Beende...[/bold yellow]")
+                    break
 
-            if self.dry_run:
-                if n >= 3:
-                    console.print("[bold green]Dry-run complete (3 iterations).[/bold green]")
-                    self._acceptance_report()
-                    return
-                hint = None
-                chosen_q = None
-                retry = False
-                continue
+                if _stop_flag[0]:
+                    console.print("[bold]Durch Ctrl+C gestoppt.[/bold]")
+                    break
 
-            status = iy.get("status", "unknown")
-            milestone = (sy.get("milestone_reached") or "").strip()
-            hypothesis = sy.get("hypothesis", "")
-
-            if autonomous_mode:
-                consecutive_errors = consecutive_errors + 1 if status == "code_error" else 0
-                user_q = (sy.get("user_question") or "").strip()
-
-                pause_reason: Optional[str] = None
-                if user_q:
-                    pause_reason = f"[bold magenta]Gemini hat eine Rueckfrage.[/bold magenta]"
-                elif milestone:
-                    pause_reason = f"[bold green]Milestone erreicht: {milestone}[/bold green]"
-                elif consecutive_errors >= 2:
-                    pause_reason = (
-                        f"[bold red]{consecutive_errors} Fehler in Folge – bitte pruefen.[/bold red]"
-                    )
-                elif hypothesis and hypothesis == last_hypothesis:
-                    pause_reason = (
-                        "[bold yellow]Gemini wiederholt die letzte Hypothese – "
-                        "moegliche Schleife, Eingabe erforderlich.[/bold yellow]"
-                    )
-
-                last_hypothesis = hypothesis
-
-                if pause_reason is None:
-                    # All good – continue without user input
+                if self.dry_run:
+                    if n >= 3:
+                        console.print("[bold green]Dry-run complete (3 iterations).[/bold green]")
+                        self._acceptance_report()
+                        return
                     hint = None
                     chosen_q = None
                     retry = False
                     continue
 
-                # ── Break out of autonomous mode ──
-                autonomous_mode = False
-                consecutive_errors = 0
-                console.rule("[bold yellow]AUTONOMER MODUS PAUSIERT[/bold yellow]")
-                console.print(pause_reason)
-                # Fall through to interactive menu below
+                status = iy.get("status", "unknown")
+                milestone = (sy.get("milestone_reached") or "").strip()
+                hypothesis = sy.get("hypothesis", "")
 
-            last_hypothesis = hypothesis
+                if autonomous_mode:
+                    consecutive_errors = consecutive_errors + 1 if status == "code_error" else 0
+                    user_q = (sy.get("user_question") or "").strip()
 
-            choice, hint, chosen_q = self._menu(n, sy, iy, cost)
-            retry = choice == "r"
+                    pause_reason: Optional[str] = None
+                    if user_q:
+                        pause_reason = f"[bold magenta]Gemini hat eine Rueckfrage.[/bold magenta]"
+                    elif milestone:
+                        pause_reason = f"[bold green]Milestone erreicht: {milestone}[/bold green]"
+                    elif consecutive_errors >= 2:
+                        pause_reason = (
+                            f"[bold red]{consecutive_errors} Fehler in Folge – bitte pruefen.[/bold red]"
+                        )
+                    elif hypothesis and hypothesis == last_hypothesis:
+                        pause_reason = (
+                            "[bold yellow]Gemini wiederholt die letzte Hypothese – "
+                            "moegliche Schleife, Eingabe erforderlich.[/bold yellow]"
+                        )
 
-            if choice == "a":
-                autonomous_mode = True
-                consecutive_errors = 0
-                retry = False
-                hint = None
-                chosen_q = None
-                console.print(
-                    "[bold cyan]Autonomer Modus – naechste Pause bei Milestone, "
-                    "2 Fehlern in Folge oder Hypothesen-Schleife.[/bold cyan]"
-                )
-                continue
+                    last_hypothesis = hypothesis
 
-            if choice == "n":
-                console.print("[bold]Gestoppt.[/bold]")
-                break
+                    if pause_reason is None:
+                        # All good – continue without user input
+                        hint = None
+                        chosen_q = None
+                        retry = False
+                        continue
 
-            if hypothesis.startswith("[CONVERGED]"):
-                console.print("[bold green]Loop konvergiert.[/bold green]")
-                break
+                    # ── Break out of autonomous mode ──
+                    autonomous_mode = False
+                    consecutive_errors = 0
+                    console.rule("[bold yellow]AUTONOMER MODUS PAUSIERT[/bold yellow]")
+                    console.print(pause_reason)
+                    # Fall through to interactive menu below
+
+                last_hypothesis = hypothesis
+
+                choice, hint, chosen_q = self._menu(n, sy, iy, cost)
+                retry = choice == "r"
+
+                if choice == "a":
+                    autonomous_mode = True
+                    consecutive_errors = 0
+                    retry = False
+                    hint = None
+                    chosen_q = None
+                    console.print(
+                        "[bold cyan]Autonomer Modus – naechste Pause bei Milestone, "
+                        "2 Fehlern in Folge oder Hypothesen-Schleife.[/bold cyan]"
+                    )
+                    continue
+
+                if choice == "n":
+                    console.print("[bold]Gestoppt.[/bold]")
+                    break
+
+                if hypothesis.startswith("[CONVERGED]"):
+                    console.print("[bold green]Loop konvergiert.[/bold green]")
+                    break
+
+        finally:
+            signal.signal(signal.SIGINT, old_sigint)
 
         console.print(f"[bold]Session-Gesamtkosten: ~${self.session_cost:.4f}[/bold]")
 
