@@ -189,10 +189,6 @@ user_question: ""     # Optional. A specific question that REQUIRES the research
                        # Use sparingly – only when you genuinely cannot decide between
                        # two directions without human guidance. The researcher's answer
                        # will be passed back to you as a hint. Leave empty otherwise.
-state_update: |
-  Complete replacement text for current_state.md. Self-contained.
-  Start with a one-line "Phase: <current phase name>" for easy scanning.
-  Keep concise (≤ MAX_STATE_TOKENS).
 campaign: ""          # Optional. Name grouping related iterations into a research
                       # campaign (e.g. "Phase 2 – Glider Collisions"). Use the
                       # same name across all iterations in the group. A new name
@@ -201,7 +197,11 @@ campaign_status: ""   # Optional. Set to "completed" only on the final iteration
                       # of a campaign – collapses it in the overview.
 campaign_summary: |   # Required (1-2 sentences) when campaign_status=completed.
                       # Becomes the permanent collapsed entry in the overview.
-                      # Leave as empty line when not completing a campaign.
+                      # Leave as a single empty line when not completing a campaign.
+state_update: |
+  Complete replacement text for current_state.md. Self-contained.
+  Start with a one-line "Phase: <current phase name>" for easy scanning.
+  Keep concise (≤ MAX_STATE_TOKENS).
 ```
 
 Milestone detection: After each iteration, compare your `state_update` against the
@@ -667,11 +667,18 @@ class Config:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def parse_yaml_block(text: str) -> dict:
-    """Extract and parse the last ```yaml...``` block from text."""
+    """Extract and parse the last ```yaml...``` block from text.
+    Falls back to parsing from the last opening fence when the response was
+    truncated before the closing fence (output-token-limit hit)."""
     matches = re.findall(r"```yaml\s*\n(.*?)```", text, re.DOTALL)
-    if not matches:
-        raise yaml.YAMLError("No yaml block found in response")
-    return yaml.safe_load(matches[-1])
+    if matches:
+        return yaml.safe_load(matches[-1])
+    # Truncated response: try from the last ```yaml opening to end of text.
+    # Block scalars (|) are closed by dedent / EOF, so yaml.safe_load handles this.
+    opens = list(re.finditer(r"```yaml\s*\n", text))
+    if opens:
+        return yaml.safe_load(text[opens[-1].end():])
+    raise yaml.YAMLError("No yaml block found in response")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
