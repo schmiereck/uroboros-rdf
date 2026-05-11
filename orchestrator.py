@@ -207,17 +207,28 @@ iteration – that defeats the purpose of autonomous operation.
 
 ## Historical Data Access
 
-You have two tools for retrieving past experiments that are no longer in the
-active log context:
+A compact "All Iterations" overview (one line per iteration: number, status,
+hypothesis) is always present at the top of your context. You do not need a
+tool call to see it.
 
-  list_iterations()         – compact table of all completed iterations (number,
-                              status, one-line hypothesis). Call this first to
-                              identify which past iteration you need.
-  read_iteration(iter_num)  – full record of one iteration: hypothesis, analysis,
-                              task, status, metrics, experimenter view.
+Three tools are available for deeper access:
 
-Use these tools sparingly – only when a past result directly informs the current
-decision. Do not call them as a default on every iteration.
+  list_iterations()                    – same overview table, useful for
+                                         filtering or re-formatting.
+  read_iteration(iter_num)             – full record of one iteration:
+                                         hypothesis, analysis, task, status,
+                                         metrics, experimenter view, plus the
+                                         list of result files available in
+                                         archive/iter_NNN/results/.
+  read_result_file(iter_num, filename) – reads a text result file (CSV, log,
+                                         txt) from archive/iter_NNN/results/.
+                                         Files > 50 KB are truncated. Binary
+                                         files (images, pickles) are rejected.
+                                         Call read_iteration first to see which
+                                         files exist.
+
+Use read_iteration and read_result_file only when a past result directly
+informs the current decision. Do not call them as a default every iteration.
 
 ---
 
@@ -1091,7 +1102,8 @@ def _make_gemini_tools() -> list:
             name="read_iteration",
             description=(
                 "Returns the full record of a past iteration: hypothesis, analysis, "
-                "task, implementation status, metrics, and experimenter observations."
+                "task, implementation status, metrics, experimenter observations, "
+                "and a list of result files available in archive/iter_NNN/results/."
             ),
             parameters=types.Schema(
                 type=types.Type.OBJECT,
@@ -1102,6 +1114,29 @@ def _make_gemini_tools() -> list:
                     ),
                 },
                 required=["iter_num"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="read_result_file",
+            description=(
+                "Reads a text result file from archive/iter_NNN/results/. "
+                "Use read_iteration first to see which files are available. "
+                "Binary files (images, pickles) cannot be read this way. "
+                "Files larger than 50 KB are truncated."
+            ),
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "iter_num": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The iteration number (e.g. 3 for iter_003).",
+                    ),
+                    "filename": types.Schema(
+                        type=types.Type.STRING,
+                        description="Filename within archive/iter_NNN/results/ (e.g. 'rules.csv').",
+                    ),
+                },
+                required=["iter_num", "filename"],
             ),
         ),
     ])]
@@ -1130,6 +1165,7 @@ def _tool_list_iterations(root: Path) -> str:
 
 
 def _tool_read_iteration(root: Path, iter_num: int) -> str:
+    record = ""
     for log_path in [root / "experiment_log.md", root / "experiment_log_archive.md"]:
         if not log_path.exists():
             continue
@@ -1139,17 +1175,76 @@ def _tool_read_iteration(root: Path, iter_num: int) -> str:
                 try:
                     data = yaml.safe_load(m.group(1))
                     if isinstance(data, dict) and data.get("iter") == iter_num:
-                        return entry.strip()
+                        record = entry.strip()
+                        break
                 except Exception:
                     pass
-    # Fallback: raw archive files
-    iter_dir = root / "archive" / f"iter_{iter_num:03d}"
-    parts = []
-    for fname in ("task.md", "result.yaml"):
-        p = iter_dir / fname
-        if p.exists():
-            parts.append(f"## {fname}\n{p.read_text(encoding='utf-8')}")
-    return "\n\n".join(parts) if parts else f"No record found for iteration {iter_num}."
+        if record:
+            break
+    if not record:
+        iter_dir = root / "archive" / f"iter_{iter_num:03d}"
+        parts = []
+        for fname in ("task.md", "result.yaml"):
+            p = iter_dir / fname
+            if p.exists():
+                parts.append(f"## {fname}\n{p.read_text(encoding='utf-8')}")
+        record = "\n\n".join(parts) if parts else f"No record found for iteration {iter_num}."
+    # Append list of result files so Gemini knows what can be read
+    results_dir = root / "archive" / f"iter_{iter_num:03d}" / "results"
+    if results_dir.is_dir():
+        files = sorted(f for f in results_dir.iterdir() if f.is_file())
+        if files:
+            lines = [f"\n\n## Result files in archive/iter_{iter_num:03d}/results/"]
+            for f in files:
+                lines.append(f"  {f.name}  ({f.stat().st_size:,} bytes)")
+            record += "\n".join(lines)
+    return record
+
+
+_MAX_RESULT_FILE_BYTES = 50_000
+
+
+def _tool_read_result_file(root: Path, iter_num: int, filename: str) -> str:
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return "Error: filename must not contain path separators."
+    p = root / "archive" / f"iter_{iter_num:03d}" / "results" / filename
+    if not p.exists():
+        return f"File not found: archive/iter_{iter_num:03d}/results/{filename}"
+    if not p.is_file():
+        return "Error: not a regular file."
+    raw = p.read_bytes()
+    if b"\x00" in raw[:512]:
+        return f"'{filename}' appears to be binary and cannot be read as text."
+    text = raw.decode("utf-8", errors="replace")
+    if len(raw) > _MAX_RESULT_FILE_BYTES:
+        return (
+            text[:_MAX_RESULT_FILE_BYTES]
+            + f"\n\n[truncated – file is {len(raw):,} bytes, showing first {_MAX_RESULT_FILE_BYTES:,}]"
+        )
+    return text
+
+
+def _iter_overview(root: Path) -> str:
+    """One-line-per-iteration table embedded permanently in the delta prompt."""
+    rows: list[dict] = []
+    for log_path in [root / "experiment_log_archive.md", root / "experiment_log.md"]:
+        if not log_path.exists():
+            continue
+        for block in re.findall(r"```yaml\s*\n(.*?)```",
+                                log_path.read_text(encoding="utf-8"), re.DOTALL):
+            try:
+                data = yaml.safe_load(block)
+                if isinstance(data, dict) and "iter" in data:
+                    rows.append(data)
+            except Exception:
+                pass
+    if not rows:
+        return "(no iterations yet)"
+    rows.sort(key=lambda x: x.get("iter", 0))
+    lines = ["iter | status          | hypothesis", "-----|-----------------|----------"]
+    for r in rows:
+        lines.append(f"{r['iter']:03d}  | {str(r.get('status', '')):<16}| {r.get('hypothesis', '')}")
+    return "\n".join(lines)
 
 
 def _trim_log_if_needed(root: Path, max_entries: int) -> None:
@@ -1196,6 +1291,10 @@ def _call_with_tools(
                 result = _tool_list_iterations(root)
             elif fc.name == "read_iteration":
                 result = _tool_read_iteration(root, int(fc.args.get("iter_num", 0)))
+            elif fc.name == "read_result_file":
+                result = _tool_read_result_file(
+                    root, int(fc.args.get("iter_num", 0)), str(fc.args.get("filename", ""))
+                )
             else:
                 result = f"Unknown tool: {fc.name}"
             parts.append(types.Part.from_function_response(name=fc.name, response={"result": result}))
@@ -1371,8 +1470,10 @@ class Orchestrator:
         log = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
         entries = log.split("\n---\n")
         last3 = "\n---\n".join(entries[-3:]) if entries else ""
+        overview = _iter_overview(self.root)
         prompt = (
             f"# Iteration {n}\n\n"
+            f"## All Iterations (overview)\n{overview}\n\n"
             f"## Current State\n{state}\n\n"
             f"## Recent Log (last 3 entries)\n{last3}\n"
         )
