@@ -161,7 +161,10 @@ just reference or modify it in-place.
 
 ## Output Format
 
-You MUST end every response with a YAML block in this exact schema:
+You MUST begin every response with the YAML block below. Put the YAML block
+FIRST – before any prose, analysis, or explanation. This ensures the block is
+never cut off by output-token limits. You may add extended commentary AFTER the
+closing ``` fence if needed.
 
 ```yaml
 analysis: |
@@ -667,17 +670,18 @@ class Config:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def parse_yaml_block(text: str) -> dict:
-    """Extract and parse the last ```yaml...``` block from text.
-    Falls back to parsing from the last opening fence when the response was
-    truncated before the closing fence (output-token-limit hit)."""
+    """Extract and parse the first ```yaml...``` block from text.
+    Gemini is instructed to put the YAML block first, so we prefer the first
+    match. Falls back to parsing from the first opening fence when the response
+    was truncated before the closing fence (output-token-limit hit)."""
     matches = re.findall(r"```yaml\s*\n(.*?)```", text, re.DOTALL)
     if matches:
-        return yaml.safe_load(matches[-1])
-    # Truncated response: try from the last ```yaml opening to end of text.
+        return yaml.safe_load(matches[0])
+    # Truncated response: try from the first ```yaml opening to end of text.
     # Block scalars (|) are closed by dedent / EOF, so yaml.safe_load handles this.
     opens = list(re.finditer(r"```yaml\s*\n", text))
     if opens:
-        return yaml.safe_load(text[opens[-1].end():])
+        return yaml.safe_load(text[opens[0].end():])
     raise yaml.YAMLError("No yaml block found in response")
 
 
@@ -815,7 +819,8 @@ class StrategyAgent:
                         history.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
                         history.append(types.Content(role="user", parts=[types.Part.from_text(text=(
                             "Your previous response did not contain a valid ```yaml``` block. "
-                            "Please respond again with the exact YAML schema specified."
+                            "Please respond again starting immediately with the YAML block "
+                            "(```yaml ... ```) as the very first thing in your response."
                         ))]))
                         text, usage_meta = _call_with_tools(client, cfg.strategy_model, history, gen_cfg, root)
             except yaml.YAMLError:
