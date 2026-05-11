@@ -199,9 +199,9 @@ campaign: ""          # Optional. Name grouping related iterations into a resear
                       # starts a new campaign. Leave empty for ungrouped iterations.
 campaign_status: ""   # Optional. Set to "completed" only on the final iteration
                       # of a campaign – collapses it in the overview.
-campaign_summary: ""  # Required when campaign_status=completed. One or two
-                      # sentences stating what the campaign established.
+campaign_summary: |   # Required (1-2 sentences) when campaign_status=completed.
                       # Becomes the permanent collapsed entry in the overview.
+                      # Leave as empty line when not completing a campaign.
 ```
 
 Milestone detection: After each iteration, compare your `state_update` against the
@@ -798,10 +798,13 @@ class StrategyAgent:
                 for parse_attempt in range(cfg.max_retries_on_parse_fail + 1):
                     try:
                         return parse_yaml_block(text), usage_meta
-                    except yaml.YAMLError:
+                    except yaml.YAMLError as ye:
                         if parse_attempt >= cfg.max_retries_on_parse_fail:
                             raise
-                        console.print("[yellow]YAML parse failed – retrying with correction prompt[/yellow]")
+                        console.print(f"[yellow]YAML parse failed – retrying with correction prompt[/yellow]")
+                        console.print(f"[dim]  Reason: {str(ye)[:200]}[/dim]")
+                        tail = (text or "")[-800:]
+                        console.print(f"[dim]  Response tail (last 800 chars):\n{tail}[/dim]")
                         history.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
                         history.append(types.Content(role="user", parts=[types.Part.from_text(text=(
                             "Your previous response did not contain a valid ```yaml``` block. "
