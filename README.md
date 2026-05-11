@@ -1,6 +1,7 @@
+ ![Uroboros-RDF](pictures/Uroboros-RDF-Logo-120px_e00.jpg)
 # Uroboros-RDF
 
-**Recursive Discovery Framework v3** — an autonomous research orchestrator that pairs two AI agents in an iterative experiment loop:
+**Recursive Discovery Framework v3** (or **Research & Development Framework**) — an autonomous research orchestrator that pairs two AI agents in an iterative experiment loop:
 
 - **Gemini 2.5 Pro** (strategy) — analyses results, forms falsifiable hypotheses, and plans the next experiment
 - **Claude Code** (implementation) — executes the experiment: writes code, runs simulations, collects metrics
