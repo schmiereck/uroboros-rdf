@@ -193,6 +193,15 @@ state_update: |
   Complete replacement text for current_state.md. Self-contained.
   Start with a one-line "Phase: <current phase name>" for easy scanning.
   Keep concise (≤ MAX_STATE_TOKENS).
+campaign: ""          # Optional. Name grouping related iterations into a research
+                      # campaign (e.g. "Phase 2 – Glider Collisions"). Use the
+                      # same name across all iterations in the group. A new name
+                      # starts a new campaign. Leave empty for ungrouped iterations.
+campaign_status: ""   # Optional. Set to "completed" only on the final iteration
+                      # of a campaign – collapses it in the overview.
+campaign_summary: ""  # Required when campaign_status=completed. One or two
+                      # sentences stating what the campaign established.
+                      # Becomes the permanent collapsed entry in the overview.
 ```
 
 Milestone detection: After each iteration, compare your `state_update` against the
@@ -205,16 +214,32 @@ are scientifically valid but lead to very different experiments, and the researc
 priorities (not the data) should decide. Do NOT use it as a default after every
 iteration – that defeats the purpose of autonomous operation.
 
+## Campaign Management
+
+Campaigns group related iterations into named research threads. They appear as
+collapsed blocks in the overview once completed.
+
+Rules:
+  - Set campaign to the same name across all iterations in a group.
+  - A new name starts a new campaign immediately.
+  - Set campaign_status="completed" exactly once, on the final iteration.
+  - campaign_summary is required with campaign_status="completed".
+  - Campaigns can run sequentially or be left ungrouped (campaign="").
+
+Completed campaigns collapse in the "All Iterations" overview showing only the
+summary. Use read_campaign() to access their full iteration history.
+
 ## Historical Data Access
 
-A compact "All Iterations" overview (one line per iteration: number, status,
-hypothesis) is always present at the top of your context. You do not need a
-tool call to see it.
+A compact "All Iterations" overview (grouped by campaign) is always present at
+the top of your context. Completed campaigns are collapsed to their summary.
 
-Three tools are available for deeper access:
+Four tools are available for deeper access:
 
   list_iterations()                    – same overview table, useful for
                                          filtering or re-formatting.
+  read_campaign(campaign_name)         – returns all iteration records for a
+                                         completed (collapsed) campaign.
   read_iteration(iter_num)             – full record of one iteration:
                                          hypothesis, analysis, task, status,
                                          metrics, experimenter view, plus the
@@ -223,12 +248,10 @@ Three tools are available for deeper access:
   read_result_file(iter_num, filename) – reads a text result file (CSV, log,
                                          txt) from archive/iter_NNN/results/.
                                          Files > 50 KB are truncated. Binary
-                                         files (images, pickles) are rejected.
-                                         Call read_iteration first to see which
-                                         files exist.
+                                         files are rejected. Call read_iteration
+                                         first to see which files exist.
 
-Use read_iteration and read_result_file only when a past result directly
-informs the current decision. Do not call them as a default every iteration.
+Use these tools only when a past result directly informs the current decision.
 
 ---
 
@@ -1023,7 +1046,7 @@ def _tokens(text: str) -> int:
 def _append_log(
     root: Path, n: int, sy: dict, iy: dict, usage: Any, cost: float
 ) -> None:
-    entry_yaml = yaml.dump({
+    entry: dict = {
         "iter": n,
         "hypothesis": sy.get("hypothesis", ""),
         "status": iy.get("status", "unknown"),
@@ -1032,7 +1055,17 @@ def _append_log(
         "input_tokens": _usage_tokens(usage)[0],
         "cached_tokens": _usage_tokens(usage)[1],
         "output_tokens": _usage_tokens(usage)[2],
-    }, allow_unicode=True)
+    }
+    campaign = (sy.get("campaign") or "").strip()
+    if campaign:
+        entry["campaign"] = campaign
+    campaign_status = (sy.get("campaign_status") or "").strip()
+    if campaign_status:
+        entry["campaign_status"] = campaign_status
+    campaign_summary = (sy.get("campaign_summary") or "").strip()
+    if campaign_summary:
+        entry["campaign_summary"] = campaign_summary
+    entry_yaml = yaml.dump(entry, allow_unicode=True)
 
     body = (
         f"## iter_{n:03d}: {sy.get('hypothesis', '')}\n\n"
@@ -1141,6 +1174,24 @@ def _make_gemini_tools() -> list:
                 required=["iter_num", "filename"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="read_campaign",
+            description=(
+                "Returns all iteration records for a named campaign. "
+                "Use when you need to review the full history of a completed "
+                "(collapsed) campaign shown in the overview."
+            ),
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "campaign_name": types.Schema(
+                        type=types.Type.STRING,
+                        description="Exact campaign name as shown in the overview.",
+                    ),
+                },
+                required=["campaign_name"],
+            ),
+        ),
     ])]
 
 
@@ -1226,8 +1277,27 @@ def _tool_read_result_file(root: Path, iter_num: int, filename: str) -> str:
     return text
 
 
+def _tool_read_campaign(root: Path, campaign_name: str) -> str:
+    found: list[str] = []
+    for log_path in [root / "experiment_log_archive.md", root / "experiment_log.md"]:
+        if not log_path.exists():
+            continue
+        for entry in log_path.read_text(encoding="utf-8").split("\n---\n"):
+            m = re.search(r"```yaml\s*\n(.*?)```", entry, re.DOTALL)
+            if m:
+                try:
+                    data = yaml.safe_load(m.group(1))
+                    if isinstance(data, dict) and (data.get("campaign") or "").strip() == campaign_name:
+                        found.append(entry.strip())
+                except Exception:
+                    pass
+    if not found:
+        return f"No iterations found for campaign \"{campaign_name}\"."
+    return "\n\n---\n\n".join(found)
+
+
 def _iter_overview(root: Path) -> str:
-    """One-line-per-iteration table embedded permanently in the delta prompt."""
+    """Campaign-grouped overview embedded permanently in every delta prompt."""
     rows: list[dict] = []
     for log_path in [root / "experiment_log_archive.md", root / "experiment_log.md"]:
         if not log_path.exists():
@@ -1243,10 +1313,56 @@ def _iter_overview(root: Path) -> str:
     if not rows:
         return "(no iterations yet)"
     rows.sort(key=lambda x: x.get("iter", 0))
-    lines = ["iter | status          | hypothesis", "-----|-----------------|----------"]
+
+    ungrouped: list[dict] = []
+    campaign_order: list[str] = []
+    campaigns: dict[str, dict] = {}
+
     for r in rows:
-        lines.append(f"{r['iter']:03d}  | {str(r.get('status', '')):<16}| {r.get('hypothesis', '')}")
-    return "\n".join(lines)
+        camp = (r.get("campaign") or "").strip()
+        if not camp:
+            ungrouped.append(r)
+        else:
+            if camp not in campaigns:
+                campaign_order.append(camp)
+                campaigns[camp] = {"rows": [], "completed": False, "summary": ""}
+            campaigns[camp]["rows"].append(r)
+            if (r.get("campaign_status") or "").strip() == "completed":
+                campaigns[camp]["completed"] = True
+                campaigns[camp]["summary"] = (r.get("campaign_summary") or "").strip()
+
+    lines: list[str] = []
+
+    if ungrouped:
+        lines.append("[ungrouped]")
+        lines.append("  iter | status          | hypothesis")
+        lines.append("  -----|-----------------|----------")
+        for r in ungrouped:
+            lines.append(f"  {r['iter']:03d}  | {str(r.get('status', '')):<16}| {r.get('hypothesis', '')}")
+        lines.append("")
+
+    for name in campaign_order:
+        c = campaigns[name]
+        camp_rows = c["rows"]
+        first_i, last_i = camp_rows[0]["iter"], camp_rows[-1]["iter"]
+        if c["completed"]:
+            lines.append(
+                f"[{name}] COMPLETED  (iter {first_i:03d}–{last_i:03d}, {len(camp_rows)} iterations)"
+            )
+            for line in c["summary"].split("\n"):
+                lines.append(f"  {line}")
+            lines.append(f"  → read_campaign(\"{name}\") to see all iterations")
+        else:
+            lines.append(f"[{name}] active")
+            lines.append("  iter | status          | hypothesis")
+            lines.append("  -----|-----------------|----------")
+            for r in camp_rows:
+                lines.append(
+                    f"  {r['iter']:03d}  | {str(r.get('status', '')):<16}| {r.get('hypothesis', '')}"
+                )
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
 
 
 def _trim_log_if_needed(root: Path, max_entries: int) -> None:
@@ -1297,6 +1413,8 @@ def _call_with_tools(
                 result = _tool_read_result_file(
                     root, int(fc.args.get("iter_num", 0)), str(fc.args.get("filename", ""))
                 )
+            elif fc.name == "read_campaign":
+                result = _tool_read_campaign(root, str(fc.args.get("campaign_name", "")))
             else:
                 result = f"Unknown tool: {fc.name}"
             parts.append(types.Part.from_function_response(name=fc.name, response={"result": result}))
