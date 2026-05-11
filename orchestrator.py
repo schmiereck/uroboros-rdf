@@ -205,6 +205,20 @@ are scientifically valid but lead to very different experiments, and the researc
 priorities (not the data) should decide. Do NOT use it as a default after every
 iteration – that defeats the purpose of autonomous operation.
 
+## Historical Data Access
+
+You have two tools for retrieving past experiments that are no longer in the
+active log context:
+
+  list_iterations()         – compact table of all completed iterations (number,
+                              status, one-line hypothesis). Call this first to
+                              identify which past iteration you need.
+  read_iteration(iter_num)  – full record of one iteration: hypothesis, analysis,
+                              task, status, metrics, experimenter view.
+
+Use these tools sparingly – only when a past result directly informs the current
+decision. Do not call them as a default on every iteration.
+
 ---
 
 ## Few-Shot Example – Iteration 1
@@ -577,6 +591,7 @@ class Config:
     max_retries_on_state_too_long: int = 2
     cache_ttl_hours: int = 6
     min_cache_tokens: int = 32768
+    max_log_entries: int = 30
     auto_commit: bool = True
     auto_push: bool = False
     verbose: bool = True
@@ -601,6 +616,7 @@ class Config:
         c.experiment_timeout_sec = lim.get("experiment_timeout_sec", c.experiment_timeout_sec)
         c.max_retries_on_parse_fail = lim.get("max_retries_on_parse_fail", c.max_retries_on_parse_fail)
         c.max_retries_on_state_too_long = lim.get("max_retries_on_state_too_long", c.max_retries_on_state_too_long)
+        c.max_log_entries = lim.get("max_log_entries", c.max_log_entries)
         ch = d.get("cache", {})
         c.cache_ttl_hours = ch.get("ttl_hours", c.cache_ttl_hours)
         c.min_cache_tokens = ch.get("min_cache_tokens", c.min_cache_tokens)
@@ -731,37 +747,31 @@ class StrategyAgent:
 
         cache = _get_or_create_cache(root, cfg, system_prompt)
         client = genai.Client()
+        tools = _make_gemini_tools()
 
         for attempt in range(3):
             try:
                 if cache:
-                    gen_cfg = types.GenerateContentConfig(cached_content=cache.name)
+                    gen_cfg = types.GenerateContentConfig(cached_content=cache.name, tools=tools)
                 else:
-                    gen_cfg = types.GenerateContentConfig(system_instruction=system_prompt)
+                    gen_cfg = types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
 
-                resp = client.models.generate_content(
-                    model=cfg.strategy_model,
-                    contents=delta,
-                    config=gen_cfg,
-                )
-                # YAML retry loop
-                text = resp.text
+                history = [types.Content(role="user", parts=[types.Part.from_text(text=delta)])]
+                text, usage_meta = _call_with_tools(client, cfg.strategy_model, history, gen_cfg, root)
+
                 for parse_attempt in range(cfg.max_retries_on_parse_fail + 1):
                     try:
-                        return parse_yaml_block(text), resp.usage_metadata
+                        return parse_yaml_block(text), usage_meta
                     except yaml.YAMLError:
                         if parse_attempt >= cfg.max_retries_on_parse_fail:
                             raise
                         console.print("[yellow]YAML parse failed – retrying with correction prompt[/yellow]")
-                        fix_resp = client.models.generate_content(
-                            model=cfg.strategy_model,
-                            contents=(
-                                "Your previous response did not contain a valid ```yaml``` block. "
-                                "Please respond again with the exact YAML schema specified."
-                            ),
-                            config=gen_cfg,
-                        )
-                        text = fix_resp.text
+                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
+                        history.append(types.Content(role="user", parts=[types.Part.from_text(text=(
+                            "Your previous response did not contain a valid ```yaml``` block. "
+                            "Please respond again with the exact YAML schema specified."
+                        ))]))
+                        text, usage_meta = _call_with_tools(client, cfg.strategy_model, history, gen_cfg, root)
             except yaml.YAMLError:
                 raise
             except Exception as e:
@@ -1062,6 +1072,138 @@ def _estimate_cost(usage: Any, model: str) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GEMINI TOOLS  (list_iterations / read_iteration)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_gemini_tools() -> list:
+    from google.genai import types  # type: ignore
+    return [types.Tool(function_declarations=[
+        types.FunctionDeclaration(
+            name="list_iterations",
+            description=(
+                "Returns a compact table of all completed iterations with iter number, "
+                "status, and one-line hypothesis. Call this first to identify which "
+                "past iteration is relevant, then use read_iteration for the full record."
+            ),
+            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
+        ),
+        types.FunctionDeclaration(
+            name="read_iteration",
+            description=(
+                "Returns the full record of a past iteration: hypothesis, analysis, "
+                "task, implementation status, metrics, and experimenter observations."
+            ),
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "iter_num": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The iteration number to read (e.g. 3 for iter_003).",
+                    ),
+                },
+                required=["iter_num"],
+            ),
+        ),
+    ])]
+
+
+def _tool_list_iterations(root: Path) -> str:
+    rows: list[dict] = []
+    for log_path in [root / "experiment_log_archive.md", root / "experiment_log.md"]:
+        if not log_path.exists():
+            continue
+        text = log_path.read_text(encoding="utf-8")
+        for block in re.findall(r"```yaml\s*\n(.*?)```", text, re.DOTALL):
+            try:
+                data = yaml.safe_load(block)
+                if isinstance(data, dict) and "iter" in data:
+                    rows.append(data)
+            except Exception:
+                pass
+    if not rows:
+        return "No iterations completed yet."
+    rows.sort(key=lambda x: x.get("iter", 0))
+    lines = ["iter | status          | hypothesis", "-----|-----------------|----------"]
+    for r in rows:
+        lines.append(f"{r['iter']:03d}  | {str(r.get('status', '')):<16}| {r.get('hypothesis', '')}")
+    return "\n".join(lines)
+
+
+def _tool_read_iteration(root: Path, iter_num: int) -> str:
+    for log_path in [root / "experiment_log.md", root / "experiment_log_archive.md"]:
+        if not log_path.exists():
+            continue
+        for entry in log_path.read_text(encoding="utf-8").split("\n---\n"):
+            m = re.search(r"```yaml\s*\n(.*?)```", entry, re.DOTALL)
+            if m:
+                try:
+                    data = yaml.safe_load(m.group(1))
+                    if isinstance(data, dict) and data.get("iter") == iter_num:
+                        return entry.strip()
+                except Exception:
+                    pass
+    # Fallback: raw archive files
+    iter_dir = root / "archive" / f"iter_{iter_num:03d}"
+    parts = []
+    for fname in ("task.md", "result.yaml"):
+        p = iter_dir / fname
+        if p.exists():
+            parts.append(f"## {fname}\n{p.read_text(encoding='utf-8')}")
+    return "\n\n".join(parts) if parts else f"No record found for iteration {iter_num}."
+
+
+def _trim_log_if_needed(root: Path, max_entries: int) -> None:
+    if max_entries <= 0:
+        return
+    log_path = root / "experiment_log.md"
+    if not log_path.exists():
+        return
+    text = log_path.read_text(encoding="utf-8")
+    parts = text.split("\n---\n")
+    header, entries = parts[0], parts[1:]
+    if len(entries) <= max_entries:
+        return
+    to_archive, to_keep = entries[:-max_entries], entries[-max_entries:]
+    archive_path = root / "experiment_log_archive.md"
+    with open(archive_path, "a", encoding="utf-8") as f:
+        if not archive_path.exists() or archive_path.stat().st_size == 0:
+            f.write("# Experiment Log Archive\n")
+        for e in to_archive:
+            f.write(f"\n---\n{e}")
+    log_path.write_text(header + "\n---\n" + "\n---\n".join(to_keep), encoding="utf-8")
+    n = len(to_archive)
+    console.print(f"[dim]Log trimmed: {n} {'entry' if n == 1 else 'entries'} archived.[/dim]")
+
+
+def _call_with_tools(
+    client: Any, model: str, history: list, gen_cfg: Any, root: Path, max_rounds: int = 10,
+) -> tuple[str, Any]:
+    """Run generate_content in a tool-call loop; return (final_text, usage_metadata)."""
+    from google.genai import types  # type: ignore
+    usage_meta = None
+    resp = None
+    for _ in range(max_rounds):
+        resp = client.models.generate_content(model=model, contents=history, config=gen_cfg)
+        usage_meta = resp.usage_metadata
+        fcs = resp.function_calls or []
+        if not fcs:
+            return resp.text or "", usage_meta
+        history.append(resp.candidates[0].content)
+        parts = []
+        for fc in fcs:
+            console.print(f"[dim]  ↳ tool: {fc.name}({dict(fc.args)})[/dim]")
+            if fc.name == "list_iterations":
+                result = _tool_list_iterations(root)
+            elif fc.name == "read_iteration":
+                result = _tool_read_iteration(root, int(fc.args.get("iter_num", 0)))
+            else:
+                result = f"Unknown tool: {fc.name}"
+            parts.append(types.Part.from_function_response(name=fc.name, response={"result": result}))
+        history.append(types.Content(role="user", parts=parts))
+    return (resp.text or "") if resp else "", usage_meta
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ORCHESTRATOR
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1106,6 +1248,7 @@ strategy_timeout_sec = 180
 experiment_timeout_sec = 14400
 max_retries_on_parse_fail = 2
 max_retries_on_state_too_long = 2
+max_log_entries = 30          # active log window; older entries go to experiment_log_archive.md
 
 [cache]
 ttl_hours = 6
@@ -1317,6 +1460,7 @@ class Orchestrator:
         cost = _estimate_cost(usage, self.cfg.strategy_model)
         self.session_cost += cost
         _append_log(self.root, n, sy, iy, usage, cost)
+        _trim_log_if_needed(self.root, self.cfg.max_log_entries)
         new_state = sy.get("state_update", "")
         if new_state:
             _update_state(self.root, new_state, self.cfg, self.strategy, delta)
