@@ -930,6 +930,24 @@ class ImplementAgent:
         errors: list[str] = []
 
         async def _stream() -> None:
+            # On Windows, shield the Claude CLI subprocess from Ctrl+C by
+            # spawning it in a new console process group. Without this, pressing
+            # Ctrl+C in the terminal sends CTRL_C_EVENT to every process in the
+            # same console group – including Claude – killing it immediately.
+            # With CREATE_NEW_PROCESS_GROUP the subprocess is in its own group
+            # and does not receive the event; our flag-based handler can then
+            # let Claude finish naturally before the orchestrator stops.
+            _orig_exec = None
+            if sys.platform == "win32":
+                import subprocess as _sp
+                _orig_exec = asyncio.create_subprocess_exec
+
+                async def _shielded_exec(*args: Any, **kwargs: Any) -> Any:
+                    kwargs.setdefault("creationflags", 0)
+                    kwargs["creationflags"] |= _sp.CREATE_NEW_PROCESS_GROUP
+                    return await _orig_exec(*args, **kwargs)  # type: ignore[misc]
+
+                asyncio.create_subprocess_exec = _shielded_exec  # type: ignore[assignment]
             try:
                 async for msg in query(prompt=task_text, options=options):
                     if msg is None:
@@ -944,6 +962,9 @@ class ImplementAgent:
                 # SDK subprocess crashed (e.g. exit code 1, auth error, OOM).
                 # Capture as error so the orchestrator can continue rather than crash.
                 errors.append(f"SDK error: {exc}")
+            finally:
+                if _orig_exec is not None:
+                    asyncio.create_subprocess_exec = _orig_exec  # type: ignore[assignment]
 
         project_root = src_dir.parent
         try:
@@ -1966,8 +1987,8 @@ class Orchestrator:
             if not _stop_flag[0]:
                 _stop_flag[0] = True
                 console.print(
-                    "\n[bold yellow]Ctrl+C – aktuelle Iteration wird noch abgeschlossen, "
-                    "dann Stopp.[/bold yellow]"
+                    "\n[bold yellow]Ctrl+C – Stopp nach aktueller Iteration "
+                    "(läuft Claude noch, wird er zu Ende gelassen).[/bold yellow]"
                 )
 
         old_sigint = signal.signal(signal.SIGINT, _handle_sigint)
