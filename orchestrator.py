@@ -675,8 +675,8 @@ def _usage_tokens(usage: Any) -> tuple[int, int, int]:
     return inp or 0, cac or 0, out or 0
 
 
-def _get_or_create_cache(root: Path, cfg: Config, system_prompt: str) -> Any:
-    """Return a google.genai CachedContent or None (silent fallback)."""
+def _get_or_create_cache(root: Path, cfg: Config, system_prompt: str, tools: list) -> Any:
+    """Return a google.genai CachedContent (with tools embedded) or None (silent fallback)."""
     try:
         from google import genai  # type: ignore
         from google.genai import types  # type: ignore
@@ -690,11 +690,11 @@ def _get_or_create_cache(root: Path, cfg: Config, system_prompt: str) -> Any:
     older = "\n---\n".join(entries[:-3]) if len(entries) > 3 else ""
     stable_content = f"# GOAL\n{goal}\n\n# OLDER LOG\n{older}"
 
-    # Check minimum size: system_prompt + stable_content
     if len(system_prompt) + len(stable_content) < cfg.min_cache_tokens * 4:
         return None
 
-    h = hashlib.sha256((system_prompt + stable_content).encode()).hexdigest()[:16]
+    # "tools_v1" in hash so old tool-less caches are never reused
+    h = hashlib.sha256(("tools_v1" + system_prompt + stable_content).encode()).hexdigest()[:16]
     state: dict = {}
     if _CACHE_FILE.exists():
         try:
@@ -719,6 +719,7 @@ def _get_or_create_cache(root: Path, cfg: Config, system_prompt: str) -> Any:
                     role="user",
                     parts=[types.Part.from_text(text=stable_content)],
                 )],
+                tools=tools,  # tools must live in the cache, not in generate_content
                 ttl=f"{cfg.cache_ttl_hours * 3600}s",
                 display_name=f"rdf-{root.name}-{h}",
             ),
@@ -756,14 +757,15 @@ class StrategyAgent:
         if chosen_q:
             delta += f"\n\n## Focus Question\n{chosen_q}"
 
-        cache = _get_or_create_cache(root, cfg, system_prompt)
-        client = genai.Client()
         tools = _make_gemini_tools()
+        cache = _get_or_create_cache(root, cfg, system_prompt, tools)
+        client = genai.Client()
 
         for attempt in range(3):
             try:
                 if cache:
-                    gen_cfg = types.GenerateContentConfig(cached_content=cache.name, tools=tools)
+                    # Tools are embedded in the cache; must NOT be repeated here
+                    gen_cfg = types.GenerateContentConfig(cached_content=cache.name)
                 else:
                     gen_cfg = types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
 
