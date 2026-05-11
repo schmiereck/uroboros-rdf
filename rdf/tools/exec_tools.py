@@ -1,0 +1,246 @@
+"""Execution tools exposed to the planner: run_agent, poll_agent, stop_agent.
+
+These tools allow the planner to spawn sub-agents, monitor them, and stop them.
+Strict sequentiality: at most one sub-agent runs at a time within a session.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from pathlib import Path
+from typing import Any
+
+import yaml
+from rich.console import Console
+
+from rdf.config import Config
+from rdf.iter_id import IterID, iter_path
+
+console = Console(highlight=False, legacy_windows=False)
+
+
+class SubAgentRegistry:
+    """Tracks running sub-agent asyncio tasks."""
+
+    def __init__(self) -> None:
+        self._running: dict[IterID, asyncio.Task] = {}
+        self._start_time: dict[IterID, float] = {}
+        self._result: dict[IterID, dict] = {}
+        self._output: dict[IterID, list[str]] = {}
+
+    def any_running(self) -> bool:
+        return bool(self._running)
+
+    def start(self, iter_id: IterID, task: asyncio.Task) -> None:
+        self._running[iter_id] = task
+        self._start_time[iter_id] = time.monotonic()
+        self._output[iter_id] = []
+
+    def elapsed(self, iter_id: IterID) -> float:
+        return time.monotonic() - self._start_time.get(iter_id, time.monotonic())
+
+    def is_done(self, iter_id: IterID) -> bool:
+        task = self._running.get(iter_id)
+        return task is None or task.done()
+
+    def collect_result(self, iter_id: IterID) -> dict | None:
+        task = self._running.get(iter_id)
+        if task is None:
+            return self._result.get(iter_id)
+        if task.done():
+            try:
+                res = task.result()
+            except Exception as e:
+                res = {"status": "code_error", "notes": str(e)}
+            self._result[iter_id] = res
+            del self._running[iter_id]
+            return res
+        return None
+
+    def cleanup(self, iter_id: IterID) -> None:
+        self._running.pop(iter_id, None)
+        self._start_time.pop(iter_id, None)
+
+
+class ExecTools:
+    """Async implementations of the planner's execution tools."""
+
+    def __init__(self, registry: SubAgentRegistry, root: Path, cfg: Config) -> None:
+        self._registry = registry
+        self._root = root
+        self._cfg = cfg
+
+    def _src_dir(self) -> Path:
+        return self._root / "src"
+
+    def _collect_state(self, iter_id: IterID) -> str:
+        """Return stdout excerpt + file listing for an iteration directory."""
+        d = iter_path(self._root, iter_id)
+        parts: list[str] = []
+        stdout_file = d / "stdout.txt"
+        if stdout_file.exists():
+            txt = stdout_file.read_text(encoding="utf-8", errors="replace")
+            parts.append(f"=== stdout (last 2000 chars) ===\n{txt[-2000:]}")
+        if d.exists():
+            files = sorted(f for f in d.rglob("*") if f.is_file())
+            if files:
+                listing = "\n".join(
+                    f"  {f.relative_to(d).as_posix()} ({f.stat().st_size:,} B)"
+                    for f in files
+                )
+                parts.append(f"=== files in iter_{iter_id}/ ===\n{listing}")
+        return "\n\n".join(parts) or "(no output yet)"
+
+    async def run_agent(
+        self,
+        iter_id: IterID,
+        task: str,
+        complexity: str,
+        estimated_runtime_sec: int,
+        timeout_sec: int | None = None,
+    ) -> dict:
+        if self._registry.any_running():
+            return {
+                "error": (
+                    "A sub-agent is still running. "
+                    "Call poll_agent or stop_agent first."
+                )
+            }
+
+        from rdf.agents.router import make_executor
+
+        executor = make_executor(complexity, self._cfg)
+        d = iter_path(self._root, iter_id)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "task.md").write_text(task, encoding="utf-8")
+
+        eff_timeout = timeout_sec or (
+            self._cfg.executor_timeout_sec
+        )
+
+        async def _run():
+            return await executor.run(task, d, self._src_dir(), self._cfg)
+
+        task_obj = asyncio.create_task(_run())
+        self._registry.start(iter_id, task_obj)
+
+        # Wait up to estimated_runtime_sec
+        done, _ = await asyncio.wait({task_obj}, timeout=float(estimated_runtime_sec))
+
+        elapsed = self._registry.elapsed(iter_id)
+        state = self._collect_state(iter_id)
+
+        if task_obj in done:
+            result = self._registry.collect_result(iter_id)
+            return {
+                "started": True,
+                "iter_id": iter_id,
+                "done": True,
+                "final_result": result,
+                "intermediate_state": state,
+                "elapsed_sec": elapsed,
+            }
+
+        return {
+            "started": True,
+            "iter_id": iter_id,
+            "done": False,
+            "final_result": None,
+            "intermediate_state": state,
+            "elapsed_sec": elapsed,
+        }
+
+    async def poll_agent(self, iter_id: IterID) -> dict:
+        elapsed = self._registry.elapsed(iter_id)
+        state = self._collect_state(iter_id)
+
+        if self._registry.is_done(iter_id):
+            result = self._registry.collect_result(iter_id)
+            self._registry.cleanup(iter_id)
+            return {
+                "done": True,
+                "final_result": result,
+                "intermediate_state": state,
+                "elapsed_sec": elapsed,
+            }
+
+        return {
+            "done": False,
+            "final_result": None,
+            "intermediate_state": state,
+            "elapsed_sec": elapsed,
+        }
+
+    async def stop_agent(self, iter_id: IterID, reason: str = "") -> dict:
+        task_obj = self._registry._running.pop(iter_id, None)
+        partial = self._collect_state(iter_id)
+        if task_obj and not task_obj.done():
+            task_obj.cancel()
+            try:
+                await asyncio.shield(task_obj)
+            except (asyncio.CancelledError, Exception):
+                pass
+            if reason:
+                d = iter_path(self._root, iter_id)
+                stderr = d / "stderr.txt"
+                existing = stderr.read_text(encoding="utf-8") if stderr.exists() else ""
+                stderr.write_text(
+                    existing + f"\n[stopped by planner: {reason}]", encoding="utf-8"
+                )
+        self._registry.cleanup(iter_id)
+        return {"stopped": True, "partial_output": partial}
+
+
+def make_dispatcher(exec_tools: ExecTools, root: Path) -> Any:
+    """Build an async tool dispatcher combining read and exec tools."""
+    from rdf.tools.read_tools import (
+        list_iterations,
+        read_campaign,
+        read_iteration,
+        read_result_file,
+    )
+
+    async def dispatch(name: str, args: dict) -> str:
+        # Read tools (sync, wrapped in to_thread for safety)
+        if name == "list_iterations":
+            return await asyncio.to_thread(list_iterations, root)
+        if name == "read_iteration":
+            return await asyncio.to_thread(
+                read_iteration, root, int(args.get("iter_num", 0))
+            )
+        if name == "read_result_file":
+            return await asyncio.to_thread(
+                read_result_file,
+                root,
+                int(args.get("iter_num", 0)),
+                str(args.get("filename", "")),
+            )
+        if name == "read_campaign":
+            return await asyncio.to_thread(
+                read_campaign, root, str(args.get("campaign_name", ""))
+            )
+        # Exec tools (async)
+        if name == "run_agent":
+            result = await exec_tools.run_agent(
+                iter_id=str(args.get("iter_id", "")),
+                task=str(args.get("task", "")),
+                complexity=str(args.get("complexity", "medium")),
+                estimated_runtime_sec=int(args.get("estimated_runtime_sec", 60)),
+                timeout_sec=args.get("timeout_sec"),
+            )
+            import json
+            return json.dumps(result)
+        if name == "poll_agent":
+            result = await exec_tools.poll_agent(str(args.get("iter_id", "")))
+            import json
+            return json.dumps(result)
+        if name == "stop_agent":
+            result = await exec_tools.stop_agent(
+                str(args.get("iter_id", "")), str(args.get("reason", ""))
+            )
+            import json
+            return json.dumps(result)
+        return f"Unknown tool: {name}"
+
+    return dispatch
