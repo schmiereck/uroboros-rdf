@@ -42,6 +42,27 @@ def _patch_claude_sdk() -> None:
 
 _patch_claude_sdk()
 
+_RESULT_YAML_REMINDER = """
+
+---
+
+REQUIRED: The very last thing in your response MUST be this YAML block — no
+exceptions. Do not end with Markdown prose, bullet points, or a summary.
+The orchestrator reads ONLY this block to record the result; without it the
+iteration is marked as code_error even if the experiment succeeded.
+
+```yaml
+status: ok              # ok | experiment_failed | code_error
+artifacts: []           # list of relative file paths written (e.g. src/foo.py)
+metrics: {}             # numeric results as key: value pairs
+log_excerpt: |          # last ~20 lines of relevant terminal output
+  ...
+experimenter_view: |    # qualitative observations and key findings
+  ...
+notes: one-line remark
+```
+"""
+
 
 @contextlib.contextmanager
 def _project_venv(project_root: Path):
@@ -102,6 +123,7 @@ class ClaudeCodeExecutorAdapter:
             kwargs["model"] = model_override
 
         options = ClaudeCodeOptions(**kwargs)
+        full_task = task + _RESULT_YAML_REMINDER
 
         collected: list[str] = []
         errors: list[str] = []
@@ -119,7 +141,7 @@ class ClaudeCodeExecutorAdapter:
 
                 asyncio.create_subprocess_exec = _shielded_exec  # type: ignore[assignment]
             try:
-                async for msg in query(prompt=task, options=options):
+                async for msg in query(prompt=full_task, options=options):
                     if msg is None:
                         continue
                     if hasattr(msg, "content"):
