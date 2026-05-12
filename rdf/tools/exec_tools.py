@@ -26,16 +26,21 @@ class SubAgentRegistry:
     def __init__(self) -> None:
         self._running: dict[IterID, asyncio.Task] = {}
         self._start_time: dict[IterID, float] = {}
+        self._estimated_runtime: dict[IterID, int] = {}
         self._result: dict[IterID, dict] = {}
         self._output: dict[IterID, list[str]] = {}
 
     def any_running(self) -> bool:
         return bool(self._running)
 
-    def start(self, iter_id: IterID, task: asyncio.Task) -> None:
+    def start(self, iter_id: IterID, task: asyncio.Task, estimated_runtime_sec: int) -> None:
         self._running[iter_id] = task
         self._start_time[iter_id] = time.monotonic()
+        self._estimated_runtime[iter_id] = estimated_runtime_sec
         self._output[iter_id] = []
+
+    def estimated_runtime(self, iter_id: IterID) -> int:
+        return self._estimated_runtime.get(iter_id, 60)
 
     def elapsed(self, iter_id: IterID) -> float:
         return time.monotonic() - self._start_time.get(iter_id, time.monotonic())
@@ -61,6 +66,7 @@ class SubAgentRegistry:
     def cleanup(self, iter_id: IterID) -> None:
         self._running.pop(iter_id, None)
         self._start_time.pop(iter_id, None)
+        self._estimated_runtime.pop(iter_id, None)
 
 
 async def _run_planner_subagent(
@@ -207,7 +213,7 @@ class ExecTools:
 
             task_obj = asyncio.create_task(_run())
 
-        self._registry.start(iter_id, task_obj)
+        self._registry.start(iter_id, task_obj, estimated_runtime_sec)
 
         done, _ = await asyncio.wait({task_obj}, timeout=float(estimated_runtime_sec))
 
@@ -235,6 +241,15 @@ class ExecTools:
         }
 
     async def poll_agent(self, iter_id: IterID) -> dict:
+        task_obj = self._registry._running.get(iter_id)
+        if task_obj and not task_obj.done():
+            wait_sec = self._registry.estimated_runtime(iter_id) / 3
+            console.print(
+                f"[dim]  poll_agent({iter_id}): waiting {wait_sec:.0f}s "
+                f"(1/3 of estimated runtime)[/dim]"
+            )
+            await asyncio.wait({task_obj}, timeout=wait_sec)
+
         elapsed = self._registry.elapsed(iter_id)
         state = self._collect_state(iter_id)
 

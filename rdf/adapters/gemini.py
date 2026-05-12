@@ -53,7 +53,7 @@ async def _call_with_tools_async(
     history: list,
     gen_cfg: Any,
     dispatcher: AsyncToolDispatcher | None,
-    max_rounds: int = 10,
+    max_rounds: int = 50,
 ) -> tuple[str, Any]:
     """Async tool-call loop: generate → dispatch tools → repeat until text."""
     from google.genai import types  # type: ignore
