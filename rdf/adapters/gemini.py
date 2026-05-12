@@ -75,7 +75,7 @@ async def _call_with_tools_async(
         history.append(resp.candidates[0].content)
         parts = []
         for fc in fcs:
-            console.print(f"[dim]  ↳ tool: {fc.name}({dict(fc.args)})[/dim]")
+            console.print(f"[dim]  ↳ tool: {fc.name}[/dim]")
             if dispatcher is not None:
                 result = await dispatcher(fc.name, dict(fc.args))
             else:
