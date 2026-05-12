@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
-import time
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +75,7 @@ class Planner:
         hint: str | None = None,
         chosen_q: str | None = None,
     ) -> tuple[dict, Any]:
-        from rdf.tools.declarations import READ_TOOL_DECLARATIONS
+        from rdf.tools.declarations import ALL_TOOL_DECLARATIONS, READ_TOOL_DECLARATIONS
 
         system_prompt = self._prompt(root, cfg)
         if hint:
@@ -86,6 +86,7 @@ class Planner:
         dispatcher = (
             self._dispatcher_factory(root) if self._dispatcher_factory else None
         )
+        tool_declarations = ALL_TOOL_DECLARATIONS if dispatcher else READ_TOOL_DECLARATIONS
 
         messages = [{"role": "user", "content": delta}]
 
@@ -94,7 +95,7 @@ class Planner:
                 plan_result = await self._adapter.complete(
                     system=system_prompt,
                     messages=messages,
-                    tool_declarations=READ_TOOL_DECLARATIONS,
+                    tool_declarations=tool_declarations,
                     dispatcher=dispatcher,
                     cache_hint=str(root),
                 )
@@ -125,7 +126,7 @@ class Planner:
                         plan_result = await self._adapter.complete(
                             system=system_prompt,
                             messages=messages,
-                            tool_declarations=READ_TOOL_DECLARATIONS,
+                            tool_declarations=tool_declarations,
                             dispatcher=dispatcher,
                             cache_hint=str(root),
                         )
@@ -146,9 +147,6 @@ class Planner:
                     raise
 
         raise RuntimeError("Planner.call_async exhausted retries")
-
-
-import asyncio  # noqa: E402 (needed for sleep in retry loop)
 
 
 class MockPlanner:

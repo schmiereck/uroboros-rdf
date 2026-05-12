@@ -307,7 +307,15 @@ class Orchestrator:
         )
 
         # IMPLEMENT (Executor)
-        console.print("[bold]-> IMPLEMENT (Executor)[/bold]")
+        timeout_display = (
+            f"{self.cfg.executor_timeout_sec // 3600}h"
+            if self.cfg.executor_timeout_sec and self.cfg.executor_timeout_sec >= 3600
+            else (f"{self.cfg.executor_timeout_sec}s" if self.cfg.executor_timeout_sec else "∞")
+        )
+        console.print(
+            f"[bold]-> IMPLEMENT (Executor)[/bold]"
+            f"[dim]  adapter: {self.cfg.executor_adapter} | timeout: {timeout_display}[/dim]"
+        )
         with console.status("Running executor..."):
             iy = await self.executor.run(
                 task_path.read_text(encoding="utf-8"), iter_dir, src_dir, self.cfg

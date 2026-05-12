@@ -108,7 +108,14 @@ class ExecTools:
                 )
             }
 
-        from rdf.agents.router import make_executor
+        from rdf.agents.router import make_executor, model_for_complexity
+
+        model_name = model_for_complexity(complexity, self._cfg)
+        console.print(
+            f"[bold]  Sub-agent[/bold] [cyan]{iter_id}[/cyan] | "
+            f"complexity: {complexity} → [dim]{model_name}[/dim] | "
+            f"ETA: {estimated_runtime_sec}s"
+        )
 
         executor = make_executor(complexity, self._cfg)
         d = iter_path(self._root, iter_id)

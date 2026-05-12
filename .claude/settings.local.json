@@ -5,7 +5,10 @@
       "Bash(git commit -m ' *)",
       "Bash(python -m py_compile orchestrator.py)",
       "Bash(python -c \"import ast; ast.parse\\(open\\('orchestrator.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('orchestrator.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('orchestrator.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(git checkout *)",
+      "Bash(python orchestrator.py --project ..\\\\rdf_digital_physic run --dry-run)",
+      "Bash(python orchestrator.py --project \"..\\\\rdf_digital_physic\" run --dry-run)"
     ]
   }
 }

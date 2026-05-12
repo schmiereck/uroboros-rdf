@@ -13,6 +13,11 @@ _MODEL_MAP: dict[str, str] = {
 }
 
 
+def model_for_complexity(complexity: str, cfg: Config) -> str:
+    """Return the model name for a given complexity label."""
+    return _MODEL_MAP.get(complexity, _MODEL_MAP.get(cfg.default_complexity, "claude-sonnet-4-6"))
+
+
 def make_executor(complexity: str, cfg: Config) -> Executor:
     """Return an Executor configured for the given complexity level."""
     model = _MODEL_MAP.get(complexity, _MODEL_MAP[cfg.default_complexity])
