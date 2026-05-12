@@ -275,6 +275,28 @@ class Orchestrator:
                 "[yellow]Warning: no 'status' in planner YAML – "
                 "did the planner call run_agent?[/yellow]"
             )
+
+        # Technical enforcement: verify a sub-agent actually ran
+        iter_dir = self.root / "archive" / f"iter_{n:03d}"
+        sub_iter_dirs = (
+            [d for d in iter_dir.iterdir() if d.is_dir() and d.name.startswith("iter_")]
+            if iter_dir.exists()
+            else []
+        )
+        if not sub_iter_dirs and iy["status"] not in ("unknown", "no_execution"):
+            console.print(
+                "[bold red]ENFORCEMENT: Planner reported results but no sub-agent ran "
+                "(no sub-iteration directories found). "
+                "Overriding status to 'no_execution'.[/bold red]"
+            )
+            iy = {
+                "status": "no_execution",
+                "metrics": {},
+                "experimenter_view": "",
+                "notes": "Planner did not call run_agent. Fabricated results discarded.",
+                "artifacts": [],
+            }
+
         console.print(f"[green]Status:[/green] {iy['status']}")
 
         # UPDATE
