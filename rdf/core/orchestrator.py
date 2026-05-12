@@ -127,13 +127,10 @@ class Orchestrator:
 
         if dry_run:
             from rdf.agents.planner import MockPlanner
-            from rdf.agents.executor import MockExecutor
             self.planner = MockPlanner()
-            self.executor = MockExecutor()
         else:
             from rdf.adapters.gemini import GeminiPlannerAdapter
             from rdf.agents.planner import Planner
-            from rdf.agents.executor import Executor
             from rdf.tools.exec_tools import ExecTools, SubAgentRegistry, make_dispatcher
 
             self._registry = SubAgentRegistry()
@@ -146,7 +143,6 @@ class Orchestrator:
                 adapter=GeminiPlannerAdapter(cfg),
                 dispatcher_factory=_dispatcher_factory,
             )
-            self.executor = Executor()
 
     # ── init ──────────────────────────────────────────────────────────────────
 
@@ -242,13 +238,11 @@ class Orchestrator:
         self, n: int, hint: Optional[str], chosen_q: Optional[str]
     ) -> tuple[dict, dict, float]:
         console.rule(f"[bold blue]ITERATION {n:03d}[/bold blue]")
-        iter_dir = self.root / "archive" / f"iter_{n:03d}"
-        iter_dir.mkdir(parents=True, exist_ok=True)
-        src_dir = self.root / "src"
-        src_dir.mkdir(exist_ok=True)
+        (self.root / "archive" / f"iter_{n:03d}").mkdir(parents=True, exist_ok=True)
+        (self.root / "src").mkdir(exist_ok=True)
 
-        # STRATEGY (Planner)
-        console.print("[bold]-> STRATEGY (Planner)[/bold]")
+        # PLANNER — analyses state, calls run_agent internally, returns synthesised YAML
+        console.print("[bold]-> PLANNER[/bold]")
         delta = self._delta_prompt(n, hint, chosen_q)
         try:
             with console.status("Calling planner..."):
@@ -268,59 +262,20 @@ class Orchestrator:
         hypothesis = sy.get("hypothesis", "")
         console.print(f"[green]Hypothesis:[/green] {hypothesis}")
 
-        # Warn if planner still references the old archive/*/code/ pattern
-        task_text_raw = sy.get("task_for_implementer", "")
-        if re.search(r"archive/iter_\d+/code/", task_text_raw):
+        # Extract execution result from the Planner's synthesised YAML
+        iy = {
+            "status": sy.get("status") or "unknown",
+            "metrics": sy.get("metrics") or {},
+            "experimenter_view": sy.get("experimenter_view") or "",
+            "notes": sy.get("notes") or "",
+            "artifacts": sy.get("artifacts") or [],
+        }
+        if iy["status"] == "unknown":
             console.print(
-                "[yellow]Warning: planner referenced 'archive/iter_NNN/code/' in "
-                "task_for_implementer. Code should go in src/ instead.[/yellow]"
+                "[yellow]Warning: no 'status' in planner YAML – "
+                "did the planner call run_agent?[/yellow]"
             )
-
-        task_path = iter_dir / "task.md"
-        task_path.write_text(
-            f"# Task – iter_{n:03d}\n\n"
-            f"**Hypothesis:** {hypothesis}\n\n"
-            f"## Working Directory\n\n"
-            f"Your working directory is `src/` – a **persistent** directory shared across all "
-            f"iterations. Build on code from previous iterations; do not start from scratch.\n"
-            f"Write results and data files to `archive/iter_{n:03d}/results/` "
-            f"(relative to the project root).\n\n"
-            f"## Task\n\n{sy.get('task_for_implementer', '')}\n\n"
-            f"## Success Criteria\n\n"
-            + "\n".join(f"- {c}" for c in sy.get("success_criteria", []))
-            + "\n\n## Required Output\n\n"
-            "You MUST end your final response with a ```yaml``` code block in this exact schema "
-            "(the orchestrator reads it to determine success):\n\n"
-            "```yaml\n"
-            "status: ok  # or experiment_failed or code_error\n"
-            "artifacts:\n"
-            "  - path/to/created/file  # relative to the project root\n"
-            "metrics:\n"
-            "  key: value  # any numeric results\n"
-            "log_excerpt: |  # last ~20 lines of relevant output\n"
-            "  ...\n"
-            "experimenter_view: |  # your qualitative observations\n"
-            "  ...\n"
-            "notes: brief technical remark\n"
-            "```\n",
-            encoding="utf-8",
-        )
-
-        # IMPLEMENT (Executor)
-        timeout_display = (
-            f"{self.cfg.executor_timeout_sec // 3600}h"
-            if self.cfg.executor_timeout_sec and self.cfg.executor_timeout_sec >= 3600
-            else (f"{self.cfg.executor_timeout_sec}s" if self.cfg.executor_timeout_sec else "∞")
-        )
-        console.print(
-            f"[bold]-> IMPLEMENT (Executor)[/bold]"
-            f"[dim]  adapter: {self.cfg.executor_adapter} | timeout: {timeout_display}[/dim]"
-        )
-        with console.status("Running executor..."):
-            iy = await self.executor.run(
-                task_path.read_text(encoding="utf-8"), iter_dir, src_dir, self.cfg
-            )
-        console.print(f"[green]Status:[/green] {iy.get('status', 'unknown')}")
+        console.print(f"[green]Status:[/green] {iy['status']}")
 
         # UPDATE
         cost = estimate_cost(usage, self.cfg.planner_model)

@@ -69,11 +69,11 @@ def append_log(
     entry_yaml = yaml.dump(entry, allow_unicode=True)
     body = (
         f"## iter_{n:03d}: {sy.get('hypothesis', '')}\n\n"
-        f"**Analysis:** {sy.get('analysis', '').strip()}\n\n"
-        f"**Task:** {sy.get('task_for_implementer', '').strip()}\n\n"
+        f"**Analysis:** {sy.get('analysis', '').strip()[:400]}\n\n"
         f"**Status:** {iy.get('status', 'unknown')}\n\n"
-        f"**Experimenter view:** {iy.get('experimenter_view', '')}\n\n"
-        f"**Metrics:** `{iy.get('metrics', {})}`\n"
+        f"**Metrics:** `{iy.get('metrics', {})}`\n\n"
+        f"**Experimenter view:** {iy.get('experimenter_view', '').strip()[:400]}\n\n"
+        f"**Notes:** {iy.get('notes', '').strip()}\n"
     )
     with open(root / "experiment_log.md", "a", encoding="utf-8") as f:
         f.write(f"\n---\n```yaml\n{entry_yaml}```\n\n{body}\n")

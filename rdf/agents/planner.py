@@ -166,7 +166,7 @@ class MockPlanner:
         hint: str | None = None,
         chosen_q: str | None = None,
     ) -> tuple[dict, Any]:
-        return self.call(root, delta, cfg, hint, chosen_q)
+        return await self._mock_data(root)
 
     def call(
         self,
@@ -176,8 +176,24 @@ class MockPlanner:
         hint: str | None = None,
         chosen_q: str | None = None,
     ) -> tuple[dict, Any]:
+        import concurrent.futures
+        try:
+            asyncio.get_running_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, self.call_async(root, delta, cfg, hint, chosen_q)).result()
+        except RuntimeError:
+            return asyncio.run(self.call_async(root, delta, cfg, hint, chosen_q))
+
+    async def _mock_data(self, root: Path) -> tuple[dict, Any]:
         n = top_level_count(root) + 1
         hyp = self._HYPS[min(n - 1, len(self._HYPS) - 1)]
+
+        # Simulate executor running (write stub script)
+        src_dir = root / "src"
+        src_dir.mkdir(exist_ok=True)
+        script = src_dir / f"run_iter_{n:03d}.py"
+        script.write_text(f'print("hello from iter {n}")\n', encoding="utf-8")
+
         data = {
             "analysis": f"[Mock] Iteration {n}. All systems nominal.",
             "open_questions": [
@@ -188,15 +204,11 @@ class MockPlanner:
             "chosen_direction": "Mock direction",
             "hypothesis": hyp,
             "rationale": "[Mock] This is the most promising direction.",
-            "task_for_implementer": (
-                f"Create src/run_iter_{n:03d}.py that prints "
-                f"'hello from iter {n}' and exits 0."
-            ),
-            "expected_outcome": "Script runs successfully.",
-            "success_criteria": [
-                "Script exits with code 0",
-                "result.yaml present",
-            ],
+            "status": "ok",
+            "metrics": {"mock_value": round(n * 1.5, 3)},
+            "experimenter_view": f"[Mock] Iteration {n} executed successfully.",
+            "notes": "[Mock] dry-run",
+            "artifacts": [f"src/run_iter_{n:03d}.py"],
             "state_update": (
                 f"# Current State (Mock)\n\nIteration {n} complete.\n"
                 f"Best mock_value: {n * 1.5}\n"
