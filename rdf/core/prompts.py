@@ -188,6 +188,27 @@ Use these tools only when a past result directly informs the current decision.
 
 ---
 
+## CRITICAL: How Function Calls Work
+
+Tools such as run_agent, read_iteration, etc. are executed via the
+**function-call API** — they are NOT triggered by writing text.
+
+CORRECT — make an actual function call:
+  → the system executes run_agent and returns the result to you automatically.
+
+WRONG — write run_agent parameters in your text response:
+  → nothing happens. The sub-agent never starts. Any result you write is fabricated.
+
+The flow looks like this:
+  1. YOU make a function call: run_agent(iter_id="113.1", task="…", complexity="medium", estimated_runtime_sec=450)
+  2. SYSTEM returns: {"done": true, "final_result": {"status": "ok", "metrics": {…}}}
+  3. YOU write your YAML report based on the real result.
+
+If you find yourself writing run_agent parameters anywhere in your text response,
+STOP immediately. Use the function-call mechanism instead.
+
+---
+
 ## Execution Tools
 
 You are responsible for running the experiment each iteration. Call
@@ -305,9 +326,13 @@ poll_agent if needed) before starting the next run_agent call.
 
 Context: Goal = find optimal LR schedule for a transformer on WikiText-103.
 Success: val_loss < 2.5 after 10 k steps. No experiments run yet.
-[called run_agent("001.1", task="Create src/train.py … write results to
-archive/iter_001/results/", complexity="medium", estimated_runtime_sec=600)]
-[run_agent returned: done=True, status=ok, val_loss=3.21]
+
+**Action taken:** function call → run_agent("001.1", task="Create src/train.py …
+write results to archive/iter_001/results/", complexity="medium",
+estimated_runtime_sec=600)
+**Result received:** done=True, status=ok, val_loss=3.21
+
+YAML report written after receiving the result:
 
 ```yaml
 analysis: |
@@ -349,10 +374,13 @@ state_update: |
 ## Few-Shot Example – Iteration 2
 
 Context: iter_001 result: val_loss=3.21, stable training, smooth loss curve.
-[called run_agent("002.1", task="Edit src/train.py: add 500-step linear
-warmup … write results to archive/iter_002/results/", complexity="medium",
-estimated_runtime_sec=600)]
-[run_agent returned: done=True, status=ok, val_loss=3.09]
+
+**Action taken:** function call → run_agent("002.1", task="Edit src/train.py:
+add 500-step linear warmup … write results to archive/iter_002/results/",
+complexity="medium", estimated_runtime_sec=600)
+**Result received:** done=True, status=ok, val_loss=3.09
+
+YAML report written after receiving the result:
 
 ```yaml
 analysis: |
@@ -396,21 +424,21 @@ state_update: |
 Context: iter_002 result: val_loss=3.09 with 500-step warmup (+3.7%).
 You want to test lr=2e-4 and immediately validate reproducibility.
 
-[called run_agent("003.1", task="Edit src/train.py: set lr=2e-4, keep
-warmup=500. Log val_loss per 500 steps and gradient norm. Write results
-to archive/iter_003/results/run1/", complexity="medium",
-estimated_runtime_sec=600)]
-[run_agent returned: done=True, status=ok, val_loss=2.97 — criterion met!]
+**Action taken:** function call → run_agent("003.1", task="Edit src/train.py:
+set lr=2e-4, keep warmup=500. Log val_loss per 500 steps and gradient norm.
+Write results to archive/iter_003/results/run1/", complexity="medium",
+estimated_runtime_sec=600)
+**Result received:** done=True, status=ok, val_loss=2.97 — criterion met!
 
 The result confirms the hypothesis, but you want to verify it is not a
-lucky seed. You call run_agent a second time with seed=123:
+lucky seed. You make a second function call:
 
-[called run_agent("003.2", task="Re-run src/train.py with seed=123
-(all else identical). Write results to archive/iter_003/results/run2/",
-complexity="low", estimated_runtime_sec=600)]
-[run_agent returned: done=True, status=ok, val_loss=2.99 — still < 3.00]
+**Action taken:** function call → run_agent("003.2", task="Re-run src/train.py
+with seed=123 (all else identical). Write results to
+archive/iter_003/results/run2/", complexity="low", estimated_runtime_sec=600)
+**Result received:** done=True, status=ok, val_loss=2.99 — still < 3.00
 
-Both runs confirm the hypothesis. Now you write your YAML report:
+Both runs confirm the hypothesis. YAML report written after receiving both results:
 
 ```yaml
 analysis: |
