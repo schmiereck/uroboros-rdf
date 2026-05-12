@@ -98,6 +98,10 @@ FIRST – before any prose, analysis, or explanation. This ensures the block is
 never cut off by output-token limits. You may add extended commentary AFTER the
 closing ``` fence if needed.
 
+**IMPORTANT:** The fields status, metrics, experimenter_view, and notes MUST
+be copied from run_agent's final_result. Do NOT write these fields without
+first calling run_agent. Do NOT guess, estimate, or invent values for them.
+
 ```yaml
 analysis: |
   Your analysis of current state and recent results.
@@ -247,13 +251,20 @@ After this call you may immediately start a new run_agent.
 
 ---
 
-### Execution pattern (required every iteration)
+### Execution pattern — MANDATORY every iteration
 
-1. Analyse state → form hypothesis → decide on task.
+**You MUST call run_agent before writing your YAML. Never write status,
+metrics, experimenter_view, or notes without first obtaining them from a
+real run_agent result. Fabricating or guessing these values is incorrect.**
+
+1. Analyse state → form hypothesis → decide on concrete task.
 2. Call run_agent(iter_id, task, complexity, estimated_runtime_sec).
 3. If done=True  → copy status/metrics/experimenter_view/notes from final_result.
 4. If done=False → call poll_agent(iter_id) until done=True, then copy result.
-5. Write your YAML response with the execution results included.
+5. Write your YAML with the execution results copied verbatim from final_result.
+
+The iter_id for a top-level iteration N is formed as "<N>.<index>", e.g.
+if the current iteration is 110, use "110.1" for the first sub-task.
 
 Strictly sequential: only one sub-agent at a time. Call poll_agent or
 stop_agent before starting a new run_agent.
