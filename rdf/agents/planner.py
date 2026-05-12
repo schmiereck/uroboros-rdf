@@ -113,19 +113,13 @@ class Planner:
                     except yaml.YAMLError as ye:
                         if parse_attempt >= cfg.max_retries_on_parse_fail:
                             raise
-                        console.print(
-                            "[yellow]YAML parse failed – retrying with correction prompt[/yellow]"
-                        )
-                        console.print(f"[dim]  Reason: {str(ye)[:200]}[/dim]")
-                        tail = (text or "")[-800:]
-                        console.print(
-                            f"[dim]  Response tail (last 800 chars):\n{tail}[/dim]"
-                        )
+                        console.print("[dim]  → continuing (no yaml block yet)[/dim]")
                         messages.append({"role": "assistant", "content": text})
                         messages.append({"role": "user", "content": (
-                            "Your previous response did not contain a valid ```yaml``` block. "
-                            "Please respond again starting immediately with the YAML block "
-                            "(```yaml ... ```) as the very first thing in your response."
+                            "Good analysis! Now continue your agentic research: "
+                            "if you haven't run the experiment yet, call run_agent to execute it. "
+                            "Once you have real results from run_agent, end your response with "
+                            "the required ```yaml``` block reporting what actually happened."
                         )})
                         plan_result = await self._adapter.complete(
                             system=system_prompt,
