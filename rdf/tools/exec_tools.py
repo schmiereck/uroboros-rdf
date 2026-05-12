@@ -186,11 +186,14 @@ class ExecTools:
         d.mkdir(parents=True, exist_ok=True)
         (d / "task.md").write_text(task, encoding="utf-8")
 
+        task_preview = task.replace("\n", " ")[:80] + ("…" if len(task) > 80 else "")
+
         if complexity == "planner":
             console.print(
                 f"[bold]  Sub-planner[/bold] [cyan]{iter_id}[/cyan] | "
                 f"model: [dim]{self._cfg.planner_model}[/dim] | "
-                f"ETA: {estimated_runtime_sec}s"
+                f"ETA: {estimated_runtime_sec}s\n"
+                f"[dim]  {task_preview}[/dim]"
             )
 
             async def _run_p():
@@ -204,7 +207,8 @@ class ExecTools:
             console.print(
                 f"[bold]  Sub-agent[/bold] [cyan]{iter_id}[/cyan] | "
                 f"complexity: {complexity} → [dim]{model_name}[/dim] | "
-                f"ETA: {estimated_runtime_sec}s"
+                f"ETA: {estimated_runtime_sec}s\n"
+                f"[dim]  {task_preview}[/dim]"
             )
             executor = make_executor(complexity, self._cfg)
 
