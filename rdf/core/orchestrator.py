@@ -244,9 +244,10 @@ class Orchestrator:
         # PLANNER — analyses state, calls run_agent internally, returns synthesised YAML
         console.print("[bold]-> PLANNER[/bold]")
         delta = self._delta_prompt(n, hint, chosen_q)
+        planner_log = self.root / "archive" / f"iter_{n:03d}" / "planner_response.txt"
         try:
             with console.status("Calling planner..."):
-                sy, usage = await self.planner.call_async(self.root, delta, self.cfg, hint, chosen_q)
+                sy, usage = await self.planner.call_async(self.root, delta, self.cfg, hint, chosen_q, log_path=planner_log)
         except Exception as e:
             console.print(f"[bold red]Planner call failed: {e}[/bold red]")
             sy = {"hypothesis": "strategy_error", "analysis": str(e), "state_update": ""}

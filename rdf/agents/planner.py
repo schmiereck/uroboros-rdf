@@ -53,6 +53,7 @@ class Planner:
         cfg: Config,
         hint: str | None = None,
         chosen_q: str | None = None,
+        log_path: Path | None = None,
     ) -> tuple[dict, Any]:
         """Synchronous wrapper — runs call_async in a thread if a loop is running."""
         import asyncio
@@ -62,10 +63,10 @@ class Planner:
             # Inside a running loop: run in a background thread with its own loop
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 return pool.submit(
-                    asyncio.run, self.call_async(root, delta, cfg, hint, chosen_q)
+                    asyncio.run, self.call_async(root, delta, cfg, hint, chosen_q, log_path)
                 ).result()
         except RuntimeError:
-            return asyncio.run(self.call_async(root, delta, cfg, hint, chosen_q))
+            return asyncio.run(self.call_async(root, delta, cfg, hint, chosen_q, log_path))
 
     async def call_async(
         self,
@@ -74,6 +75,7 @@ class Planner:
         cfg: Config,
         hint: str | None = None,
         chosen_q: str | None = None,
+        log_path: Path | None = None,
     ) -> tuple[dict, Any]:
         from rdf.tools.declarations import ALL_TOOL_DECLARATIONS, READ_TOOL_DECLARATIONS
 
@@ -102,6 +104,8 @@ class Planner:
 
                 text = plan_result.text
                 usage_meta = plan_result.usage
+                if log_path is not None:
+                    log_path.write_text(text or "", encoding="utf-8")
 
                 for parse_attempt in range(cfg.max_retries_on_parse_fail + 1):
                     try:
@@ -132,6 +136,8 @@ class Planner:
                         )
                         text = plan_result.text
                         usage_meta = plan_result.usage
+                        if log_path is not None:
+                            log_path.write_text(text or "", encoding="utf-8")
 
             except yaml.YAMLError:
                 raise
