@@ -120,8 +120,11 @@ RUN_AGENT = ToolDeclaration(
             "complexity": {
                 "type": "string",
                 "description": (
-                    "Task complexity — controls model selection. "
-                    "One of: 'low' (Haiku), 'medium' (Sonnet), 'high' (Opus)."
+                    "Task complexity — controls agent type and model selection. "
+                    "'low' (Haiku), 'medium' (Sonnet), 'high' (Opus) spawn an "
+                    "Executor (Claude Code). "
+                    "'planner' spawns a full inner Planner (Gemini) that can "
+                    "itself call run_agent, forming a recursive hierarchy."
                 ),
             },
             "estimated_runtime_sec": {

@@ -202,10 +202,17 @@ waits up to `estimated_runtime_sec`, and returns the result.
     notes: brief remark
     ```
 
-**complexity** – Controls model selection:
-  "low"    → Claude Haiku  4.5  – fast/cheap; simple scripts, data parsing, <120s
-  "medium" → Claude Sonnet 4.6  – default; most implementation tasks
-  "high"   → Claude Opus   4.7  – complex algorithms, multi-file refactors, deep debugging
+**complexity** – Controls agent type and model:
+  "low"     → Executor: Claude Haiku  4.5  – fast/cheap; simple scripts, data parsing
+  "medium"  → Executor: Claude Sonnet 4.6  – default; most implementation tasks
+  "high"    → Executor: Claude Opus   4.7  – complex algorithms, deep debugging
+  "planner" → inner Planner (Gemini)  – for sub-goals that themselves require
+              analysis, multi-step planning, and spawning further Executors.
+              The inner Planner runs the same system prompt and can call
+              run_agent recursively (forming IDs like 105.1.1, 105.1.2, …).
+              Its synthesised YAML is returned as the final_result.
+              Use sparingly — only when a sub-goal is genuinely too complex
+              for a single Executor call.
 
 **estimated_runtime_sec** – Expected wall time. The tool returns after this
   many seconds even if the agent is still running (done=False). Estimate

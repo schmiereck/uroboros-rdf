@@ -15,7 +15,7 @@ import yaml
 from rich.console import Console
 
 from rdf.config import Config
-from rdf.iter_id import IterID, iter_path
+from rdf.iter_id import IterID, iter_depth, iter_path
 
 console = Console(highlight=False, legacy_windows=False)
 
@@ -63,6 +63,65 @@ class SubAgentRegistry:
         self._start_time.pop(iter_id, None)
 
 
+async def _run_planner_subagent(
+    iter_id: IterID,
+    task: str,
+    root: Path,
+    cfg: Config,
+) -> dict:
+    """Spawn an inner Planner (Gemini) as a sub-agent.
+
+    The inner planner gets its own isolated ExecTools/SubAgentRegistry so it
+    can call run_agent for its own sub-tasks (forming deeper iter_ids such as
+    105.1.1, 105.1.2, …).  Its synthesised YAML is written to result.yaml in
+    the iter directory and returned as the final_result dict.
+    """
+    from rdf.adapters.gemini import GeminiPlannerAdapter
+    from rdf.agents.planner import Planner
+
+    depth = iter_depth(iter_id)
+    delta = (
+        f"# Sub-Planner Task (depth {depth})\n\n"
+        f"Your iter_id context is `{iter_id}`. When spawning sub-agents via "
+        f"run_agent, form their IDs as `{iter_id}.1`, `{iter_id}.2`, etc.\n\n"
+        f"## Goal\n\n{task}\n"
+    )
+
+    inner_registry = SubAgentRegistry()
+    inner_exec = ExecTools(inner_registry, root, cfg)
+
+    def _factory(r: Path):
+        return make_dispatcher(inner_exec, r)
+
+    inner_planner = Planner(
+        adapter=GeminiPlannerAdapter(cfg),
+        dispatcher_factory=_factory,
+    )
+
+    try:
+        data, _ = await inner_planner.call_async(root, delta, cfg)
+    except Exception as e:
+        return {
+            "status": "code_error",
+            "metrics": {},
+            "experimenter_view": "",
+            "notes": f"Planner sub-agent failed: {e}",
+            "analysis": str(e),
+        }
+
+    d = iter_path(root, iter_id)
+    (d / "result.yaml").write_text(yaml.dump(data, allow_unicode=True), encoding="utf-8")
+
+    return {
+        "status": data.get("status") or "unknown",
+        "metrics": data.get("metrics") or {},
+        "experimenter_view": data.get("experimenter_view") or "",
+        "notes": data.get("notes") or "",
+        "analysis": data.get("analysis") or "",
+        "state_update": data.get("state_update") or "",
+    }
+
+
 class ExecTools:
     """Async implementations of the planner's execution tools."""
 
@@ -108,31 +167,48 @@ class ExecTools:
                 )
             }
 
-        from rdf.agents.router import make_executor, model_for_complexity
+        depth = iter_depth(iter_id)
+        if depth >= self._cfg.max_depth:
+            return {
+                "error": (
+                    f"Maximum recursion depth {self._cfg.max_depth} reached. "
+                    f"iter_id '{iter_id}' is at depth {depth}."
+                )
+            }
 
-        model_name = model_for_complexity(complexity, self._cfg)
-        console.print(
-            f"[bold]  Sub-agent[/bold] [cyan]{iter_id}[/cyan] | "
-            f"complexity: {complexity} → [dim]{model_name}[/dim] | "
-            f"ETA: {estimated_runtime_sec}s"
-        )
-
-        executor = make_executor(complexity, self._cfg)
         d = iter_path(self._root, iter_id)
         d.mkdir(parents=True, exist_ok=True)
         (d / "task.md").write_text(task, encoding="utf-8")
 
-        eff_timeout = timeout_sec or (
-            self._cfg.executor_timeout_sec
-        )
+        if complexity == "planner":
+            console.print(
+                f"[bold]  Sub-planner[/bold] [cyan]{iter_id}[/cyan] | "
+                f"model: [dim]{self._cfg.planner_model}[/dim] | "
+                f"ETA: {estimated_runtime_sec}s"
+            )
 
-        async def _run():
-            return await executor.run(task, d, self._src_dir(), self._cfg)
+            async def _run_p():
+                return await _run_planner_subagent(iter_id, task, self._root, self._cfg)
 
-        task_obj = asyncio.create_task(_run())
+            task_obj = asyncio.create_task(_run_p())
+        else:
+            from rdf.agents.router import make_executor, model_for_complexity
+
+            model_name = model_for_complexity(complexity, self._cfg)
+            console.print(
+                f"[bold]  Sub-agent[/bold] [cyan]{iter_id}[/cyan] | "
+                f"complexity: {complexity} → [dim]{model_name}[/dim] | "
+                f"ETA: {estimated_runtime_sec}s"
+            )
+            executor = make_executor(complexity, self._cfg)
+
+            async def _run():
+                return await executor.run(task, d, self._src_dir(), self._cfg)
+
+            task_obj = asyncio.create_task(_run())
+
         self._registry.start(iter_id, task_obj)
 
-        # Wait up to estimated_runtime_sec
         done, _ = await asyncio.wait({task_obj}, timeout=float(estimated_runtime_sec))
 
         elapsed = self._registry.elapsed(iter_id)
