@@ -106,8 +106,10 @@ just reference or modify it in-place.
 ## Output Format (your final report — written after run_agent completes)
 
 After all run_agent calls are done and you have real results, write your YAML
-report. Put it FIRST in your response — before any prose — so it is never
-cut off by output-token limits.
+report. The YAML block MUST be the first thing in your response — start your
+reply with ` ```yaml ` on the very first line. Never write analysis, prose, or
+markdown before the YAML block. Anything written after a token-limit cut-off
+is lost; the YAML block is not.
 
 The fields status, metrics, experimenter_view, and notes MUST be copied
 verbatim from run_agent's final_result. They document what actually happened.
@@ -141,6 +143,9 @@ state_update: |
   Complete replacement text for current_state.md. Self-contained.
   Start with a one-line "Phase: <current phase name>" for easy scanning.
   Keep concise (≤ MAX_STATE_TOKENS).
+  ONLY include results from iterations that have ALREADY COMPLETED.
+  NEVER write results for future iterations (e.g. iter_N+1) that have not
+  run yet — that is fabrication and will corrupt the research record.
 ```
 
 Milestone detection: After each iteration, compare your `state_update` against the
