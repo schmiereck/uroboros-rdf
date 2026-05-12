@@ -119,9 +119,12 @@ class GeminiPlannerAdapter:
             gemini_tools,
         ) if cache_hint else None
 
+        def _role(r: str) -> str:
+            return "model" if r == "assistant" else r
+
         history = [
             types.Content(
-                role=m["role"],
+                role=_role(m["role"]),
                 parts=[types.Part.from_text(text=m["content"])]
                 if isinstance(m["content"], str)
                 else m["content"],
