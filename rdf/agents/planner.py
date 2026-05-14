@@ -77,6 +77,8 @@ class Planner:
         chosen_q: str | None = None,
         log_path: Path | None = None,
     ) -> tuple[dict, Any]:
+        from types import SimpleNamespace
+
         from rdf.tools.declarations import ALL_TOOL_DECLARATIONS, READ_TOOL_DECLARATIONS
 
         system_prompt = self._prompt(root, cfg)
@@ -92,8 +94,26 @@ class Planner:
 
         messages = [{"role": "user", "content": delta}]
 
+        def _add_usage(acc: Any, u: Any) -> Any:
+            """Sum token counts from usage object u into acc SimpleNamespace."""
+            from rdf.state.log import usage_tokens
+            i, c, o = usage_tokens(u)
+            r = getattr(u, "api_call_rounds", 1)
+            acc.prompt_token_count += i
+            acc.cached_content_token_count += c
+            acc.candidates_token_count += o
+            acc.api_call_rounds += r
+            return acc
+
         for attempt in range(3):
             try:
+                acc_usage = SimpleNamespace(
+                    prompt_token_count=0,
+                    cached_content_token_count=0,
+                    candidates_token_count=0,
+                    api_call_rounds=0,
+                )
+
                 plan_result = await self._adapter.complete(
                     system=system_prompt,
                     messages=messages,
@@ -103,13 +123,13 @@ class Planner:
                 )
 
                 text = plan_result.text
-                usage_meta = plan_result.usage
+                _add_usage(acc_usage, plan_result.usage)
                 if log_path is not None:
                     log_path.write_text(text or "", encoding="utf-8")
 
                 for parse_attempt in range(cfg.max_retries_on_parse_fail + 1):
                     try:
-                        return _parse_yaml_block(text), usage_meta
+                        return _parse_yaml_block(text), acc_usage
                     except yaml.YAMLError as ye:
                         if parse_attempt >= cfg.max_retries_on_parse_fail:
                             raise
@@ -129,7 +149,7 @@ class Planner:
                             cache_hint=str(root),
                         )
                         text = plan_result.text
-                        usage_meta = plan_result.usage
+                        _add_usage(acc_usage, plan_result.usage)
                         if log_path is not None:
                             log_path.write_text(text or "", encoding="utf-8")
 
@@ -165,6 +185,7 @@ class MockPlanner:
         cfg: Config,
         hint: str | None = None,
         chosen_q: str | None = None,
+        log_path: Path | None = None,
     ) -> tuple[dict, Any]:
         return await self._mock_data(root)
 

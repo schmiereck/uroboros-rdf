@@ -22,7 +22,7 @@ async def update_state(
     cfg: Config,
     planner_call: AsyncPlannerCall,
     delta: str,
-) -> None:
+) -> list:
     """Write *new_state* to current_state.md.
 
     If the text exceeds cfg.max_state_tokens, call the planner to produce a
@@ -30,12 +30,16 @@ async def update_state(
 
     *planner_call* is an async callable with signature
     ``async (root, prompt, cfg) -> (data_dict, usage)``.
+
+    Returns a list of extra usage objects from any shortening calls made,
+    so the caller can track their cost.
     """
     state_path = root / "current_state.md"
     if tokens(new_state) <= cfg.max_state_tokens:
         state_path.write_text(new_state, encoding="utf-8")
-        return
+        return []
 
+    extra_usages = []
     for _ in range(cfg.max_retries_on_state_too_long):
         shorten = (
             f"{delta}\n\nThe proposed state_update has {tokens(new_state)} tokens "
@@ -43,14 +47,16 @@ async def update_state(
             f"that preserves all key findings."
         )
         try:
-            data, _ = await planner_call(root, shorten, cfg)
+            data, usage = await planner_call(root, shorten, cfg)
+            extra_usages.append(usage)
             new_state = data.get("state_update", new_state)
             if tokens(new_state) <= cfg.max_state_tokens:
                 state_path.write_text(new_state, encoding="utf-8")
-                return
+                return extra_usages
         except Exception:
             break
 
     truncated = new_state[: cfg.max_state_tokens * 4] + "\n\n[truncated]"
     state_path.write_text(truncated, encoding="utf-8")
     console.print("[yellow]WARNING: current_state.md truncated to fit token limit.[/yellow]")
+    return extra_usages

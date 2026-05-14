@@ -307,7 +307,17 @@ class Orchestrator:
         trim_log_if_needed(self.root, self.cfg.max_log_entries)
         new_state = sy.get("state_update", "")
         if new_state:
-            await update_state(self.root, new_state, self.cfg, self.planner.call_async, delta)
+            extra_usages = await update_state(
+                self.root, new_state, self.cfg, self.planner.call_async, delta
+            )
+            for eu in extra_usages:
+                eu_cost = estimate_cost(eu, self.cfg.planner_model)
+                self.session_cost += eu_cost
+                eu_inp, eu_cac, eu_out = usage_tokens(eu)
+                console.print(
+                    f"[dim]  state-shorten: {eu_inp/1000:.1f}k in (cached {eu_cac/1000:.1f}k), "
+                    f"{eu_out/1000:.1f}k out | ~${eu_cost:.4f}[/dim]"
+                )
 
         # GIT COMMIT
         if self.cfg.auto_commit:
@@ -333,9 +343,11 @@ class Orchestrator:
                 self.git.push(self.root)
 
         inp, cac, out = usage_tokens(usage)
+        rounds = getattr(usage, "api_call_rounds", 1)
         console.print(
             f"[dim]Tokens: {inp/1000:.1f}k in (cached {cac/1000:.1f}k), "
-            f"{out/1000:.1f}k out | ~${cost:.4f} | session ~${self.session_cost:.4f}[/dim]"
+            f"{out/1000:.1f}k out | {rounds} API round{'s' if rounds != 1 else ''} | "
+            f"~${cost:.4f} | session ~${self.session_cost:.4f}[/dim]"
         )
         return sy, iy, cost
 

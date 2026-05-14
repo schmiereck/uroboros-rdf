@@ -73,6 +73,13 @@ def get_or_create_cache(
             ),
         )
         _CACHE_FILE.write_text(json.dumps({"hash": h, "cache_name": cache.name}))
+        # Gemini charges cache storage at ~$4.50/M tokens/hour on top of per-call fees.
+        cache_tokens = len(system_prompt + stable_content) // 4
+        storage_cost_est = cache_tokens / 1_000_000 * 4.50 * cfg.cache_ttl_hours
+        console.print(
+            f"[dim]Cache created: ~{cache_tokens:,} tokens × {cfg.cache_ttl_hours}h TTL "
+            f"≈ ~${storage_cost_est:.3f} storage[/dim]"
+        )
         return cache
     except Exception as e:
         console.print(

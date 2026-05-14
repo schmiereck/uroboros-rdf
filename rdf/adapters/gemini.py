@@ -55,10 +55,16 @@ async def _call_with_tools_async(
     dispatcher: AsyncToolDispatcher | None,
     max_rounds: int = 50,
 ) -> tuple[str, Any]:
-    """Async tool-call loop: generate → dispatch tools → repeat until text."""
+    """Async tool-call loop: generate → dispatch tools → repeat until text.
+
+    Returns accumulated usage across ALL rounds, not just the last one.
+    """
+    from types import SimpleNamespace
+
     from google.genai import types  # type: ignore
 
-    usage_meta = None
+    acc_inp = acc_cac = acc_out = 0
+    rounds = 0
     resp = None
     for _ in range(max_rounds):
         resp = await asyncio.to_thread(
@@ -67,10 +73,16 @@ async def _call_with_tools_async(
             contents=history,
             config=gen_cfg,
         )
-        usage_meta = resp.usage_metadata
+        rounds += 1
+        um = resp.usage_metadata
+        if um:
+            acc_inp += getattr(um, "prompt_token_count", 0) or 0
+            acc_cac += getattr(um, "cached_content_token_count", 0) or 0
+            acc_out += getattr(um, "candidates_token_count", 0) or 0
+
         fcs = resp.function_calls or []
         if not fcs:
-            return resp.text or "", usage_meta
+            break
 
         history.append(resp.candidates[0].content)
         parts = []
@@ -87,7 +99,13 @@ async def _call_with_tools_async(
             )
         history.append(types.Content(role="user", parts=parts))
 
-    return (resp.text or "") if resp else "", usage_meta
+    usage_accumulated = SimpleNamespace(
+        prompt_token_count=acc_inp,
+        cached_content_token_count=acc_cac,
+        candidates_token_count=acc_out,
+        api_call_rounds=rounds,
+    )
+    return ((resp.text or "") if resp else ""), usage_accumulated
 
 
 class GeminiPlannerAdapter:
