@@ -33,7 +33,13 @@ def get_or_create_cache(
     older = "\n---\n".join(entries[:-3]) if len(entries) > 3 else ""
     stable_content = f"# GOAL\n{goal}\n\n# OLDER LOG\n{older}"
 
-    if len(system_prompt) + len(stable_content) < cfg.min_cache_tokens * 4:
+    total_chars = len(system_prompt) + len(stable_content)
+    threshold_chars = cfg.min_cache_tokens * 4
+    if total_chars < threshold_chars:
+        console.print(
+            f"[dim]Cache skipped: {total_chars//4:,} tokens < {cfg.min_cache_tokens:,} threshold "
+            f"(grows into caching when content exceeds {cfg.min_cache_tokens:,} tokens)[/dim]"
+        )
         return None
 
     # "tools_v1" prefix in hash so caches without tools are never reused

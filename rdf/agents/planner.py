@@ -43,7 +43,7 @@ class Planner:
 
     def _prompt(self, root: Path, cfg: Config) -> str:
         if self._system_prompt is None:
-            self._system_prompt = build_system_prompt(root, cfg.min_cache_tokens * 4)
+            self._system_prompt = build_system_prompt(root)
         return self._system_prompt
 
     def call(

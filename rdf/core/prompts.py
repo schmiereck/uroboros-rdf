@@ -583,34 +583,12 @@ variance – the spread of outcomes across runs with different random seeds.
 ---
 """
 
-_PAD_BLOCK = """\
-
-## Methodology Checklist (reference copy)
-
-Before submitting your YAML, verify:
-  [ ] Is the hypothesis falsifiable with a specific outcome?
-  [ ] Is exactly one variable changing from the baseline?
-  [ ] Is the experiment the smallest that answers the question?
-  [ ] Did you call run_agent and wait for done=True before writing the YAML?
-  [ ] Are status/metrics/experimenter_view/notes copied from the run_agent result?
-  [ ] Does the state_update reflect ALL confirmed/refuted findings?
-  [ ] Have you listed 3–7 open questions covering the full possibility space?
-  [ ] Does the hypothesis make a quantitative prediction where possible?
-  [ ] Have you considered whether the experiment could be confounded?
-  [ ] Does the task description for run_agent include exact file paths and output formats?
-
-"""
-
-
-def build_system_prompt(root: Path, min_chars: int) -> str:
-    """Build the padded system prompt, optionally embedding system_glossary.md."""
+def build_system_prompt(root: Path) -> str:
+    """Build the system prompt, optionally embedding system_glossary.md."""
     parts = [_CORE]
     glossary = root / "system_glossary.md"
     if glossary.exists():
         parts.append(
             f"\n\n# User Domain Glossary\n{glossary.read_text(encoding='utf-8')}\n"
         )
-    prompt = "".join(parts)
-    while len(prompt) < min_chars:
-        prompt += _PAD_BLOCK
-    return prompt
+    return "".join(parts)
