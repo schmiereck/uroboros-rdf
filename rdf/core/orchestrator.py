@@ -297,12 +297,56 @@ class Orchestrator:
             )
         return prompt
 
+    def _project_delta_prompt(
+        self,
+        n: int,
+        hint: Optional[str],
+        chosen_q: Optional[str],
+        resume_context: Optional[str] = None,
+    ) -> str:
+        """Delta prompt for project mode — emphasises goal decomposition."""
+        goal = (self.root / "goal.md").read_text(encoding="utf-8")
+        state = (self.root / "current_state.md").read_text(encoding="utf-8")
+        log_path = self.root / "experiment_log.md"
+        log = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        entries = log.split("\n---\n")
+        last3 = "\n---\n".join(entries[-3:]) if entries else ""
+        overview = iter_overview(self.root)
+        prompt = (
+            f"# Research Project – Phase {n}\n\n"
+            f"## Research Goal\n{goal}\n\n"
+            f"## All Iterations (overview)\n{overview}\n\n"
+            f"## Current State\n{state}\n\n"
+            f"## Recent Log (last 3 entries)\n{last3}\n\n"
+            f"## Decompose and Execute\n"
+            f"Plan and execute the next research phase. Break it into sub-tasks:\n"
+            f"- run_agent(complexity='planner') — for sub-goals requiring multi-step "
+            f"analysis (the inner Planner can itself spawn sub-agents)\n"
+            f"- run_agent(complexity='medium'/'high') — for bounded, direct experiments\n"
+            f"Run sub-tasks sequentially. Each result informs the next. "
+            f"Synthesise all results into your final YAML report.\n"
+        )
+        if hint:
+            prompt += f"\n## User Hint\n{hint}\n"
+        if chosen_q:
+            prompt += f"\n## Focus Question\n{chosen_q}\n"
+        if resume_context:
+            prompt += (
+                f"\n## Interrupted Sub-Agents (Resume Context)\n\n"
+                f"The following sub-agents were interrupted:\n\n"
+                f"{resume_context}\n\n"
+                f"If result.yaml exists: integrate that result. "
+                f"If no result.yaml: restart with run_agent.\n"
+            )
+        return prompt
+
     async def _run_iteration(
         self,
         n: int,
         hint: Optional[str],
         chosen_q: Optional[str],
         resume_context: Optional[str] = None,
+        delta_override: Optional[str] = None,
     ) -> tuple[dict, dict, float]:
         console.rule(f"[bold blue]ITERATION {n:03d}[/bold blue]")
         (self.root / "archive" / f"iter_{n:03d}").mkdir(parents=True, exist_ok=True)
@@ -310,7 +354,7 @@ class Orchestrator:
 
         # PLANNER — analyses state, calls run_agent internally, returns synthesised YAML
         console.print("[bold]-> PLANNER[/bold]")
-        delta = self._delta_prompt(n, hint, chosen_q, resume_context)
+        delta = delta_override if delta_override is not None else self._delta_prompt(n, hint, chosen_q, resume_context)
         planner_log = self.root / "archive" / f"iter_{n:03d}" / "planner_response.txt"
         try:
             with console.status("Calling planner..."):
@@ -603,7 +647,7 @@ class Orchestrator:
 
     # ── main loop ─────────────────────────────────────────────────────────────
 
-    async def _async_run_loop(self) -> None:
+    async def _async_run_loop(self, project_mode: bool = False) -> None:
         if not (self.root / "goal.md").exists():
             console.print(
                 "[red]No goal.md found. Run: "
@@ -700,7 +744,17 @@ class Orchestrator:
                 iter_resume_context = resume_context if first_iteration else None
                 first_iteration = False
                 try:
-                    sy, iy, cost = await self._run_iteration(n, hint, chosen_q, iter_resume_context)
+                    if project_mode:
+                        project_delta = self._project_delta_prompt(
+                            n, hint, chosen_q, iter_resume_context
+                        )
+                        sy, iy, cost = await self._run_iteration(
+                            n, hint, chosen_q, delta_override=project_delta
+                        )
+                    else:
+                        sy, iy, cost = await self._run_iteration(
+                            n, hint, chosen_q, iter_resume_context
+                        )
                 except KeyboardInterrupt:
                     console.print(
                         "\n[bold yellow]Ctrl+C – iteration interrupted. Stopping...[/bold yellow]"
@@ -793,6 +847,10 @@ class Orchestrator:
 
     def run_loop(self) -> None:
         asyncio.run(self._async_run_loop())
+
+    def run_project(self) -> None:
+        """Project mode: same loop as run_loop but with decomposition-focused prompting."""
+        asyncio.run(self._async_run_loop(project_mode=True))
 
     # ── acceptance report ─────────────────────────────────────────────────────
 
