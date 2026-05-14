@@ -112,7 +112,8 @@ Commands:
     root = (args.project if args.project else Path(".")).resolve()
     cfg = Config.load(root / "config.toml")
     dry_run = getattr(args, "dry_run", False)
-    orch = Orchestrator(root, cfg, dry_run=dry_run)
+    project_mode = args.cmd == "project"
+    orch = Orchestrator(root, cfg, dry_run=dry_run, project_mode=project_mode)
 
     if args.cmd == "init":
         orch.init_lab()

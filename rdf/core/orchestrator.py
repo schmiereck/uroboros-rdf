@@ -168,10 +168,17 @@ def _build_resume_context(root: Path, interrupted: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 class Orchestrator:
-    def __init__(self, root: Path, cfg: Config, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        root: Path,
+        cfg: Config,
+        dry_run: bool = False,
+        project_mode: bool = False,
+    ) -> None:
         self.root = root
         self.cfg = cfg
         self.dry_run = dry_run
+        self._project_mode = project_mode
         self.git = GitManager()
         self.session_cost = 0.0
 
@@ -192,6 +199,7 @@ class Orchestrator:
             self.planner = Planner(
                 adapter=GeminiPlannerAdapter(cfg),
                 dispatcher_factory=_dispatcher_factory,
+                project_mode=project_mode,
             )
 
     # ── init ──────────────────────────────────────────────────────────────────

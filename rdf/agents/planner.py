@@ -36,14 +36,20 @@ def _parse_yaml_block(text: str) -> dict:
 class Planner:
     """Wraps a PlannerAdapter with YAML parsing, retry logic, and tool dispatch."""
 
-    def __init__(self, adapter: Any, dispatcher_factory: Any = None) -> None:
+    def __init__(
+        self,
+        adapter: Any,
+        dispatcher_factory: Any = None,
+        project_mode: bool = False,
+    ) -> None:
         self._adapter = adapter
         self._dispatcher_factory = dispatcher_factory
+        self._project_mode = project_mode
         self._system_prompt: str | None = None
 
     def _prompt(self, root: Path, cfg: Config) -> str:
         if self._system_prompt is None:
-            self._system_prompt = build_system_prompt(root)
+            self._system_prompt = build_system_prompt(root, self._project_mode)
         return self._system_prompt
 
     def call(
