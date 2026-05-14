@@ -75,6 +75,7 @@ async def _run_planner_subagent(
     task: str,
     root: Path,
     cfg: Config,
+    git: Any = None,
 ) -> dict:
     """Spawn an inner Planner (Gemini) as a sub-agent.
 
@@ -95,7 +96,7 @@ async def _run_planner_subagent(
     )
 
     inner_registry = SubAgentRegistry()
-    inner_exec = ExecTools(inner_registry, root, cfg)
+    inner_exec = ExecTools(inner_registry, root, cfg, git=git, parent_id=iter_id)
 
     def _factory(r: Path):
         return make_dispatcher(inner_exec, r)
@@ -132,11 +133,20 @@ async def _run_planner_subagent(
 class ExecTools:
     """Async implementations of the planner's execution tools."""
 
-    def __init__(self, registry: SubAgentRegistry, root: Path, cfg: Config) -> None:
+    def __init__(
+        self,
+        registry: SubAgentRegistry,
+        root: Path,
+        cfg: Config,
+        git: Any = None,
+        parent_id: IterID | None = None,
+    ) -> None:
         self._registry = registry
         self._root = root
         self._cfg = cfg
         self._stop_event: asyncio.Event = asyncio.Event()
+        self._git = git
+        self._parent_id = parent_id
 
     def _src_dir(self) -> Path:
         return self._root / "src"
@@ -187,11 +197,28 @@ class ExecTools:
                 )
             }
 
+        # Enforce iter_id prefix so inner planners can't accidentally create
+        # top-level directories or collide with sibling sub-agents.
+        if self._parent_id is not None:
+            expected_prefix = self._parent_id + "."
+            if not iter_id.startswith(expected_prefix):
+                return {
+                    "error": (
+                        f"Invalid iter_id '{iter_id}'. "
+                        f"Sub-agents of '{self._parent_id}' must use ids like "
+                        f"'{self._parent_id}.1', '{self._parent_id}.2', etc."
+                    )
+                }
+
         d = iter_path(self._root, iter_id)
         d.mkdir(parents=True, exist_ok=True)
         (d / "task.md").write_text(task, encoding="utf-8")
 
-        # Write checkpoint BEFORE starting the agent
+        # Commit task.md before the agent starts (captures intent)
+        if self._git and self._cfg.auto_commit:
+            self._git.commit(self._root, f"iter_{iter_id}: start ({complexity})")
+
+        # Write checkpoint AFTER the start-commit (keeps it out of git history)
         checkpoint_path = d / "checkpoint.yaml"
         checkpoint_data = {
             "iter_id": iter_id,
@@ -216,7 +243,7 @@ class ExecTools:
             )
 
             async def _run_p():
-                return await _run_planner_subagent(iter_id, task, self._root, self._cfg)
+                return await _run_planner_subagent(iter_id, task, self._root, self._cfg, self._git)
 
             task_obj = asyncio.create_task(_run_p())
         else:
@@ -245,10 +272,13 @@ class ExecTools:
 
         if task_obj in done:
             result = self._registry.collect_result(iter_id)
-            # Delete checkpoint now that the agent has completed
             checkpoint_path = d / "checkpoint.yaml"
             if checkpoint_path.exists():
                 checkpoint_path.unlink()
+            # Commit results after the agent completes (code changes, stdout, result.yaml)
+            if self._git and self._cfg.auto_commit:
+                status_str = (result or {}).get("status", "unknown")
+                self._git.commit(self._root, f"iter_{iter_id}: complete [{status_str}]")
             return {
                 "started": True,
                 "iter_id": iter_id,
@@ -283,10 +313,12 @@ class ExecTools:
         if self._registry.is_done(iter_id):
             result = self._registry.collect_result(iter_id)
             self._registry.cleanup(iter_id)
-            # Delete checkpoint now that the agent has completed
             checkpoint_path = iter_path(self._root, iter_id) / "checkpoint.yaml"
             if checkpoint_path.exists():
                 checkpoint_path.unlink()
+            if self._git and self._cfg.auto_commit:
+                status_str = (result or {}).get("status", "unknown")
+                self._git.commit(self._root, f"iter_{iter_id}: complete [{status_str}]")
             return {
                 "done": True,
                 "final_result": result,
