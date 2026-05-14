@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from rdf.config import Config
-from rdf.iter_id import top_level_count
+from rdf.iter_id import iter_path, top_level_count
 from rdf.state.git import GitManager
 from rdf.state.log import append_log, estimate_cost, trim_log_if_needed, usage_tokens
 from rdf.state.update import update_state
@@ -111,6 +111,56 @@ _RESEARCH_REQUIREMENTS_TEMPLATE = """\
 # The orchestrator will automatically use this venv for the executor agent
 # if .venv/ exists in the project directory.
 """
+
+
+# ---------------------------------------------------------------------------
+# Resume helpers
+# ---------------------------------------------------------------------------
+
+def _find_interrupted_iterations(root: Path) -> list[dict]:
+    """Scan archive/ for checkpoint.yaml files with status=running."""
+    interrupted = []
+    archive = root / "archive"
+    if not archive.exists():
+        return []
+    for iter_dir in sorted(archive.iterdir()):
+        if not iter_dir.is_dir() or not iter_dir.name.startswith("iter_"):
+            continue
+        # Check all sub-iteration dirs for checkpoint.yaml
+        for sub_dir in sorted(iter_dir.rglob("checkpoint.yaml")):
+            try:
+                data = yaml.safe_load(sub_dir.read_text(encoding="utf-8"))
+                if data and data.get("status") == "running":
+                    interrupted.append({
+                        "checkpoint_path": sub_dir,
+                        "iter_id": data.get("iter_id"),
+                        "task": data.get("task", ""),
+                        "complexity": data.get("complexity", "medium"),
+                    })
+            except Exception:
+                pass
+    return interrupted
+
+
+def _build_resume_context(root: Path, interrupted: list[dict]) -> str:
+    lines = []
+    for item in interrupted:
+        iter_id = item["iter_id"]
+        task_preview = item["task"][:200]
+        result_path = iter_path(root, iter_id) / "result.yaml"
+        if result_path.exists():
+            result_summary = result_path.read_text(encoding="utf-8")[:500]
+            lines.append(
+                f"- iter_id={iter_id}: COMPLETED (result.yaml exists)\n"
+                f"  Task: {task_preview}\n"
+                f"  Result preview:\n{result_summary}"
+            )
+        else:
+            lines.append(
+                f"- iter_id={iter_id}: INTERRUPTED (no result.yaml)\n"
+                f"  Task: {task_preview}"
+            )
+    return "\n\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +264,11 @@ class Orchestrator:
     # ── iteration ─────────────────────────────────────────────────────────────
 
     def _delta_prompt(
-        self, n: int, hint: Optional[str], chosen_q: Optional[str]
+        self,
+        n: int,
+        hint: Optional[str],
+        chosen_q: Optional[str],
+        resume_context: Optional[str] = None,
     ) -> str:
         state = (self.root / "current_state.md").read_text(encoding="utf-8")
         log_path = self.root / "experiment_log.md"
@@ -232,10 +286,23 @@ class Orchestrator:
             prompt += f"\n## User Hint\n{hint}\n"
         if chosen_q:
             prompt += f"\n## Focus Question\n{chosen_q}\n"
+        if resume_context:
+            prompt += (
+                f"\n## Interrupted Sub-Agents (Resume Context)\n\n"
+                f"The following sub-agents were interrupted and need to be handled:\n\n"
+                f"{resume_context}\n\n"
+                f"For each interrupted sub-agent:\n"
+                f"- If result.yaml exists in its directory, it completed — integrate that result.\n"
+                f"- If no result.yaml exists, you may restart it with a new run_agent call.\n"
+            )
         return prompt
 
     async def _run_iteration(
-        self, n: int, hint: Optional[str], chosen_q: Optional[str]
+        self,
+        n: int,
+        hint: Optional[str],
+        chosen_q: Optional[str],
+        resume_context: Optional[str] = None,
     ) -> tuple[dict, dict, float]:
         console.rule(f"[bold blue]ITERATION {n:03d}[/bold blue]")
         (self.root / "archive" / f"iter_{n:03d}").mkdir(parents=True, exist_ok=True)
@@ -243,7 +310,7 @@ class Orchestrator:
 
         # PLANNER — analyses state, calls run_agent internally, returns synthesised YAML
         console.print("[bold]-> PLANNER[/bold]")
-        delta = self._delta_prompt(n, hint, chosen_q)
+        delta = self._delta_prompt(n, hint, chosen_q, resume_context)
         planner_log = self.root / "archive" / f"iter_{n:03d}" / "planner_response.txt"
         try:
             with console.status("Calling planner..."):
@@ -586,6 +653,8 @@ class Orchestrator:
                     "\n[bold yellow]Ctrl+C – stopping after current iteration "
                     "(if executor is still running it will be allowed to finish).[/bold yellow]"
                 )
+                if not self.dry_run:
+                    self._exec_tools._stop_event.set()
 
         old_sigint = signal.signal(signal.SIGINT, _handle_sigint)
 
@@ -603,11 +672,35 @@ class Orchestrator:
                         "2 consecutive errors, or hypothesis loop.[/bold cyan]"
                     )
 
+        # Detect interrupted sub-agents from a previous session
+        resume_context: Optional[str] = None
+        if not self.dry_run:
+            interrupted = _find_interrupted_iterations(self.root)
+            if interrupted:
+                console.print(
+                    f"[yellow]Found {len(interrupted)} interrupted sub-agent(s) from previous session.[/yellow]"
+                )
+                for item in interrupted:
+                    has_result = (iter_path(self.root, item["iter_id"]) / "result.yaml").exists()
+                    status_str = (
+                        "[green]result.yaml exists[/green]"
+                        if has_result
+                        else "[red]no result.yaml[/red]"
+                    )
+                    console.print(
+                        f"  {item['iter_id']}: {status_str} – {item['task'][:80]}"
+                    )
+                resume_context = _build_resume_context(self.root, interrupted)
+
+        first_iteration = True
+
         try:
             for _ in range(self.cfg.max_iterations):
                 n = top_level_count(self.root) + (0 if retry else 1)
+                iter_resume_context = resume_context if first_iteration else None
+                first_iteration = False
                 try:
-                    sy, iy, cost = await self._run_iteration(n, hint, chosen_q)
+                    sy, iy, cost = await self._run_iteration(n, hint, chosen_q, iter_resume_context)
                 except KeyboardInterrupt:
                     console.print(
                         "\n[bold yellow]Ctrl+C – iteration interrupted. Stopping...[/bold yellow]"

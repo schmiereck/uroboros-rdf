@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +136,7 @@ class ExecTools:
         self._registry = registry
         self._root = root
         self._cfg = cfg
+        self._stop_event: asyncio.Event = asyncio.Event()
 
     def _src_dir(self) -> Path:
         return self._root / "src"
@@ -165,6 +167,9 @@ class ExecTools:
         estimated_runtime_sec: int,
         timeout_sec: int | None = None,
     ) -> dict:
+        if self._stop_event.is_set():
+            return {"error": "Stop requested. No new sub-agents will start."}
+
         if self._registry.any_running():
             return {
                 "error": (
@@ -185,6 +190,20 @@ class ExecTools:
         d = iter_path(self._root, iter_id)
         d.mkdir(parents=True, exist_ok=True)
         (d / "task.md").write_text(task, encoding="utf-8")
+
+        # Write checkpoint BEFORE starting the agent
+        checkpoint_path = d / "checkpoint.yaml"
+        checkpoint_data = {
+            "iter_id": iter_id,
+            "task": task,
+            "complexity": complexity,
+            "estimated_runtime_sec": estimated_runtime_sec,
+            "started_at": datetime.now().isoformat(),
+            "status": "running",
+        }
+        checkpoint_path.write_text(
+            yaml.dump(checkpoint_data, allow_unicode=True), encoding="utf-8"
+        )
 
         task_preview = task.replace("\n", " ")[:80] + ("…" if len(task) > 80 else "")
 
@@ -226,6 +245,10 @@ class ExecTools:
 
         if task_obj in done:
             result = self._registry.collect_result(iter_id)
+            # Delete checkpoint now that the agent has completed
+            checkpoint_path = d / "checkpoint.yaml"
+            if checkpoint_path.exists():
+                checkpoint_path.unlink()
             return {
                 "started": True,
                 "iter_id": iter_id,
@@ -260,6 +283,10 @@ class ExecTools:
         if self._registry.is_done(iter_id):
             result = self._registry.collect_result(iter_id)
             self._registry.cleanup(iter_id)
+            # Delete checkpoint now that the agent has completed
+            checkpoint_path = iter_path(self._root, iter_id) / "checkpoint.yaml"
+            if checkpoint_path.exists():
+                checkpoint_path.unlink()
             return {
                 "done": True,
                 "final_result": result,
