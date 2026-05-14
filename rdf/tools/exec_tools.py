@@ -318,6 +318,9 @@ class ExecTools:
                     existing + f"\n[stopped by planner: {reason}]", encoding="utf-8"
                 )
         self._registry.cleanup(iter_id)
+        checkpoint_path = iter_path(self._root, iter_id) / "checkpoint.yaml"
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
         return {"stopped": True, "partial_output": partial}
 
 
