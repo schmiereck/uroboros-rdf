@@ -150,6 +150,13 @@ class ClaudeCodeExecutorAdapter:
                                 collected.append(block.text)
                     if getattr(msg, "is_error", False):
                         errors.append(str(getattr(msg, "error", msg)))
+                    # Detect token limit via stop_reason on result messages
+                    stop_reason = getattr(msg, "stop_reason", None)
+                    if stop_reason == "max_tokens":
+                        errors.append(
+                            "TOKEN_LIMIT: Claude hit output token limit "
+                            "(stop_reason=max_tokens). Context may be too large."
+                        )
             except Exception as exc:
                 errors.append(f"SDK error: {exc}")
             finally:
@@ -168,6 +175,13 @@ class ClaudeCodeExecutorAdapter:
             errors.append(f"Timeout after {timeout_sec}s")
 
         output = "\n".join(collected)
+
+        # Surface token limit as a proper exception so the orchestrator can pause
+        token_limit_msgs = [e for e in errors if e.startswith("TOKEN_LIMIT:")]
+        if token_limit_msgs:
+            from rdf.errors import TokenLimitError
+            raise TokenLimitError("claude-executor", token_limit_msgs[0][len("TOKEN_LIMIT: "):])
+
         try:
             result = _parse_yaml_block(output)
         except yaml.YAMLError:

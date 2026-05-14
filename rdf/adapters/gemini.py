@@ -80,6 +80,18 @@ async def _call_with_tools_async(
             acc_cac += getattr(um, "cached_content_token_count", 0) or 0
             acc_out += getattr(um, "candidates_token_count", 0) or 0
 
+        # Detect output token limit before processing tool calls
+        if resp.candidates:
+            finish_reason = getattr(resp.candidates[0], "finish_reason", None)
+            if finish_reason is not None and "MAX_TOKENS" in str(finish_reason).upper():
+                from rdf.errors import TokenLimitError
+                raise TokenLimitError(
+                    "gemini-output",
+                    f"Output token limit hit after {acc_out:,} output tokens "
+                    f"({rounds} round{'s' if rounds != 1 else ''}). "
+                    "Increase max_output_tokens or reduce context size.",
+                )
+
         fcs = resp.function_calls or []
         if not fcs:
             break
@@ -167,6 +179,19 @@ class GeminiPlannerAdapter:
                 return PlanResult(text=text, usage=usage_meta)
 
             except Exception as e:
+                from rdf.errors import TokenLimitError
+                if isinstance(e, TokenLimitError):
+                    raise  # never retry token limit errors
+                # Detect input-too-long errors from the Gemini API
+                err_lower = str(e).lower()
+                if any(kw in err_lower for kw in (
+                    "too large", "too long", "payload size", "context window",
+                    "input limit", "tokens exceed", "request size",
+                )):
+                    raise TokenLimitError(
+                        "gemini-input",
+                        f"Input too large for context window: {e}",
+                    ) from e
                 if attempt < 2:
                     wait = 2 ** attempt
                     console.print(

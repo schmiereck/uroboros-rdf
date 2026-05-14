@@ -159,9 +159,12 @@ class Planner:
                         if log_path is not None:
                             log_path.write_text(text or "", encoding="utf-8")
 
-            except yaml.YAMLError:
+            except (yaml.YAMLError,):
                 raise
             except Exception as e:
+                from rdf.errors import TokenLimitError
+                if isinstance(e, TokenLimitError):
+                    raise  # never retry — same input hits same limit
                 if attempt < 2:
                     wait = 2 ** attempt
                     console.print(

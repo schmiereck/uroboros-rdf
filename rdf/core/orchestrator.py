@@ -371,6 +371,9 @@ class Orchestrator:
             with console.status("Calling planner..."):
                 sy, usage = await self.planner.call_async(self.root, delta, self.cfg, call_hint, call_chosen_q, log_path=planner_log)
         except Exception as e:
+            from rdf.errors import TokenLimitError
+            if isinstance(e, TokenLimitError):
+                raise  # propagate to _async_run_loop for user-controlled pause
             console.print(f"[bold red]Planner call failed: {e}[/bold red]")
             sy = {"hypothesis": "strategy_error", "analysis": str(e), "state_update": ""}
             iy: dict = {"status": "code_error", "notes": f"Planner call failed: {e}"}
@@ -771,6 +774,50 @@ class Orchestrator:
                         "\n[bold yellow]Ctrl+C – iteration interrupted. Stopping...[/bold yellow]"
                     )
                     break
+                except Exception as e:
+                    from rdf.errors import TokenLimitError
+                    if not isinstance(e, TokenLimitError):
+                        raise
+                    # ── Token limit pause ────────────────────────────────────
+                    console.rule("[bold red]TOKEN LIMIT[/bold red]")
+                    console.print(
+                        f"[bold red]{e}[/bold red]\n\n"
+                        "[yellow]The model ran out of tokens and cannot produce a complete "
+                        "response. Retrying the same input would hit the same limit.\n\n"
+                        "What you can do:\n"
+                        "  - Trim experiment_log.md (archive old entries manually)\n"
+                        "  - Trim or compress current_state.md\n"
+                        "  - Add a hint asking the planner to write a shorter state update\n\n"
+                        "The failed iteration left no log entry and is not recorded.[/yellow]\n"
+                    )
+                    if self.dry_run:
+                        break
+                    console.print(
+                        "[bold]Actions[/bold]:\n"
+                        "  c   Continue to next iteration (no hint)\n"
+                        "  h   Continue with a hint (e.g. 'write a very short state update')\n"
+                        "  n   Stop\n",
+                        markup=False,
+                    )
+                    while True:
+                        raw = console.input("[bold]Input:[/bold] ").strip().lower()
+                        if raw == "n":
+                            console.print("[bold]Stopped.[/bold]")
+                            signal.signal(signal.SIGINT, old_sigint)
+                            console.print(
+                                f"[bold]Session total cost: ~${self.session_cost:.4f}[/bold]"
+                            )
+                            return
+                        if raw in ("c", ""):
+                            hint = None
+                            break
+                        if raw == "h":
+                            hint = console.input("Hint to planner: ").strip() or None
+                            break
+                        console.print("[yellow]Unknown input.[/yellow]")
+                    retry = False
+                    chosen_q = None
+                    continue  # next iteration
 
                 if _stop_flag[0]:
                     console.print("[bold]Stopped by Ctrl+C.[/bold]")
