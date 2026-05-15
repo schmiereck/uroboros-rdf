@@ -265,7 +265,7 @@ waits up to `estimated_runtime_sec`, and returns the result.
     "iter_id": "105.1",
     "done": true | false,
     "final_result": {          # set when done=true
-      "status": "ok",          # ok | experiment_failed | code_error
+      "status": "ok",          # ok | experiment_failed | code_error | token_limit
       "metrics": {...},
       "experimenter_view": "...",
       "notes": "...",
@@ -274,6 +274,11 @@ waits up to `estimated_runtime_sec`, and returns the result.
     "intermediate_state": "...",  # stdout excerpt + file listing
     "elapsed_sec": 47.2
   }
+
+**If status = "token_limit"**: the executor hit its context limit. Treat this like
+  an unrecoverable code_error. Do NOT invent metrics or results for the failed
+  sub-task. Report status=code_error in your YAML with an honest experimenter_view
+  explaining what was attempted and why it was cut off.
 
 ### poll_agent(iter_id)
 

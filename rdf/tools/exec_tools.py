@@ -57,10 +57,16 @@ class SubAgentRegistry:
         if task.done():
             try:
                 res = task.result()
-            except Exception as e:
-                res = {"status": "code_error", "notes": str(e)}
-            self._result[iter_id] = res
+            except Exception as exc:
+                del self._running[iter_id]
+                from rdf.errors import TokenLimitError
+                if isinstance(exc, TokenLimitError):
+                    raise  # caller must write result.yaml, clean up, then re-raise
+                res = {"status": "code_error", "notes": str(exc), "metrics": {}, "artifacts": []}
+                self._result[iter_id] = res
+                return res
             del self._running[iter_id]
+            self._result[iter_id] = res
             return res
         return None
 
@@ -109,6 +115,9 @@ async def _run_planner_subagent(
     try:
         data, _ = await inner_planner.call_async(root, delta, cfg)
     except Exception as e:
+        from rdf.errors import TokenLimitError
+        if isinstance(e, TokenLimitError):
+            raise  # propagate — outer run_agent will record result and clean up
         return {
             "status": "code_error",
             "metrics": {},
@@ -150,6 +159,23 @@ class ExecTools:
 
     def _src_dir(self) -> Path:
         return self._root / "src"
+
+    def _on_token_limit(self, iter_id: IterID, d: Path, state: str, exc: Exception) -> None:
+        """Write token_limit result.yaml, clean checkpoint, git-commit before caller re-raises."""
+        result = {
+            "status": "token_limit",
+            "notes": str(exc),
+            "metrics": {},
+            "artifacts": [],
+            "log_excerpt": state[-500:] if state else "",
+        }
+        (d / "result.yaml").write_text(yaml.dump(result, allow_unicode=True), encoding="utf-8")
+        checkpoint_path = d / "checkpoint.yaml"
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
+        self._registry.cleanup(iter_id)
+        if self._git and self._cfg.auto_commit:
+            self._git.commit(self._root, f"iter_{iter_id}: complete [token_limit]")
 
     def _collect_state(self, iter_id: IterID) -> str:
         """Return stdout excerpt + file listing for an iteration directory."""
@@ -271,11 +297,17 @@ class ExecTools:
         state = self._collect_state(iter_id)
 
         if task_obj in done:
-            result = self._registry.collect_result(iter_id)
+            try:
+                result = self._registry.collect_result(iter_id)
+            except Exception as exc:
+                from rdf.errors import TokenLimitError
+                if isinstance(exc, TokenLimitError):
+                    self._on_token_limit(iter_id, d, state, exc)
+                    raise  # propagates through dispatcher → planner → orchestrator pause
+                raise
             checkpoint_path = d / "checkpoint.yaml"
             if checkpoint_path.exists():
                 checkpoint_path.unlink()
-            # Commit results after the agent completes (code changes, stdout, result.yaml)
             if self._git and self._cfg.auto_commit:
                 status_str = (result or {}).get("status", "unknown")
                 self._git.commit(self._root, f"iter_{iter_id}: complete [{status_str}]")
@@ -311,9 +343,17 @@ class ExecTools:
         state = self._collect_state(iter_id)
 
         if self._registry.is_done(iter_id):
-            result = self._registry.collect_result(iter_id)
+            d = iter_path(self._root, iter_id)
+            try:
+                result = self._registry.collect_result(iter_id)
+            except Exception as exc:
+                from rdf.errors import TokenLimitError
+                if isinstance(exc, TokenLimitError):
+                    self._on_token_limit(iter_id, d, state, exc)
+                    raise  # propagates through dispatcher → planner → orchestrator pause
+                raise
             self._registry.cleanup(iter_id)
-            checkpoint_path = iter_path(self._root, iter_id) / "checkpoint.yaml"
+            checkpoint_path = d / "checkpoint.yaml"
             if checkpoint_path.exists():
                 checkpoint_path.unlink()
             if self._git and self._cfg.auto_commit:

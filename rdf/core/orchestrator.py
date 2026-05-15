@@ -782,13 +782,15 @@ class Orchestrator:
                     console.rule("[bold red]TOKEN LIMIT[/bold red]")
                     console.print(
                         f"[bold red]{e}[/bold red]\n\n"
-                        "[yellow]The model ran out of tokens and cannot produce a complete "
-                        "response. Retrying the same input would hit the same limit.\n\n"
+                        "[yellow]The model ran out of tokens. The iteration produced no log "
+                        "entry (any sub-agent git commits made before the limit are preserved "
+                        "— check `git log` to see them).\n\n"
                         "What you can do:\n"
                         "  - Trim experiment_log.md (archive old entries manually)\n"
                         "  - Trim or compress current_state.md\n"
-                        "  - Add a hint asking the planner to write a shorter state update\n\n"
-                        "The failed iteration left no log entry and is not recorded.[/yellow]\n"
+                        "  - Add a hint asking the planner to write a shorter state update\n"
+                        "  - Increase max_output_tokens in config.toml (if available)\n\n"
+                        "Retrying the same input would hit the same limit.[/yellow]\n"
                     )
                     if self.dry_run:
                         break
