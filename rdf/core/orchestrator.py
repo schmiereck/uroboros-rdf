@@ -360,6 +360,10 @@ class Orchestrator:
         (self.root / "archive" / f"iter_{n:03d}").mkdir(parents=True, exist_ok=True)
         (self.root / "src").mkdir(exist_ok=True)
 
+        # Tell ExecTools which top-level iteration is active (enables iter_id validation)
+        if not self.dry_run:
+            self._exec_tools.set_iteration(n)
+
         # PLANNER — analyses state, calls run_agent internally, returns synthesised YAML
         console.print("[bold]-> PLANNER[/bold]")
         delta = delta_override if delta_override is not None else self._delta_prompt(n, hint, chosen_q, resume_context)
@@ -411,15 +415,20 @@ class Orchestrator:
         )
         if not sub_iter_dirs and iy["status"] not in ("unknown", "no_execution"):
             console.print(
-                "[bold red]ENFORCEMENT: Planner reported results but no sub-agent ran "
-                "(no sub-iteration directories found). "
-                "Overriding status to 'no_execution'.[/bold red]"
+                f"[bold red]ENFORCEMENT: Planner reported results but no sub-iteration "
+                f"directories were found under archive/iter_{n:03d}/. "
+                f"Possible cause: run_agent was called with an iter_id from a different "
+                f"iteration (should start with '{n}.'). "
+                f"Fabricated results discarded — status overridden to 'no_execution'.[/bold red]"
             )
             iy = {
                 "status": "no_execution",
                 "metrics": {},
                 "experimenter_view": "",
-                "notes": "Planner did not call run_agent. Fabricated results discarded.",
+                "notes": (
+                    f"No sub-agent ran for iteration {n}. "
+                    "Planner may have used wrong iter_id prefix. Results discarded."
+                ),
                 "artifacts": [],
             }
 

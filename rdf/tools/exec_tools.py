@@ -156,6 +156,15 @@ class ExecTools:
         self._stop_event: asyncio.Event = asyncio.Event()
         self._git = git
         self._parent_id = parent_id
+        self._current_top_level: int | None = None  # set by orchestrator before each iteration
+
+    def set_iteration(self, n: int) -> None:
+        """Tell top-level ExecTools which top-level iteration is running.
+
+        Enables iter_id prefix validation for the outer planner (parent_id=None),
+        preventing it from accidentally using a previous iteration's number.
+        """
+        self._current_top_level = n
 
     def _src_dir(self) -> Path:
         return self._root / "src"
@@ -223,9 +232,9 @@ class ExecTools:
                 )
             }
 
-        # Enforce iter_id prefix so inner planners can't accidentally create
-        # top-level directories or collide with sibling sub-agents.
+        # Enforce iter_id prefix so planners can't accidentally use a wrong iteration number.
         if self._parent_id is not None:
+            # Sub-planner: iter_ids must start with the sub-planner's own id.
             expected_prefix = self._parent_id + "."
             if not iter_id.startswith(expected_prefix):
                 return {
@@ -233,6 +242,18 @@ class ExecTools:
                         f"Invalid iter_id '{iter_id}'. "
                         f"Sub-agents of '{self._parent_id}' must use ids like "
                         f"'{self._parent_id}.1', '{self._parent_id}.2', etc."
+                    )
+                }
+        elif self._current_top_level is not None:
+            # Top-level planner: iter_ids must start with "<current_iteration>.".
+            expected_prefix = f"{self._current_top_level}."
+            if not iter_id.startswith(expected_prefix):
+                return {
+                    "error": (
+                        f"Wrong iter_id '{iter_id}' for iteration {self._current_top_level}. "
+                        f"Use ids like '{self._current_top_level}.1', "
+                        f"'{self._current_top_level}.2', etc. "
+                        f"(not numbers from a previous or future iteration)."
                     )
                 }
 
