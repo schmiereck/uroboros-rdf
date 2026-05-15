@@ -149,7 +149,10 @@ class ClaudeCodeExecutorAdapter:
                             if hasattr(block, "text"):
                                 collected.append(block.text)
                     if getattr(msg, "is_error", False):
-                        errors.append(str(getattr(msg, "error", msg)))
+                        # Prefer msg.result (quota/billing errors land there, not msg.error)
+                        result_text = getattr(msg, "result", None) or ""
+                        error_text = str(getattr(msg, "error", None) or msg)
+                        errors.append(result_text if result_text else error_text)
                     # Detect token limit via stop_reason on result messages
                     stop_reason = getattr(msg, "stop_reason", None)
                     if stop_reason == "max_tokens":
@@ -176,7 +179,19 @@ class ClaudeCodeExecutorAdapter:
 
         output = "\n".join(collected)
 
-        # Surface token limit as a proper exception so the orchestrator can pause
+        # Surface usage quota errors before generic token limit check
+        _QUOTA_PATTERNS = ("out of extra usage", "quota exceeded", "usage limit exceeded")
+        quota_err = next(
+            (e for e in errors if any(p in e.lower() for p in _QUOTA_PATTERNS)), None
+        )
+        if quota_err:
+            import re as _re
+            m = _re.search(r'result="([^"]+)"', quota_err)
+            detail = m.group(1) if m else quota_err[:300]
+            from rdf.errors import QuotaError
+            raise QuotaError("claude-executor", detail)
+
+        # Surface output token limit as a proper exception so the orchestrator can pause
         token_limit_msgs = [e for e in errors if e.startswith("TOKEN_LIMIT:")]
         if token_limit_msgs:
             from rdf.errors import TokenLimitError

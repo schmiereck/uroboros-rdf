@@ -17,3 +17,19 @@ class TokenLimitError(Exception):
         if detail:
             msg += f": {detail}"
         super().__init__(msg)
+
+
+class QuotaError(TokenLimitError):
+    """Raised when the Claude usage quota is exhausted ('out of extra usage').
+
+    IS-A TokenLimitError so all existing no-retry guards propagate it correctly.
+    Recovery differs from a token limit: wait for quota reset, don't trim context.
+    """
+
+    def __init__(self, model: str, detail: str = "") -> None:
+        self.model = model
+        self.detail = detail
+        msg = f"Usage quota exceeded [{model}]"
+        if detail:
+            msg += f": {detail}"
+        Exception.__init__(self, msg)

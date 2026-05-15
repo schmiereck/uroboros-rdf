@@ -775,23 +775,36 @@ class Orchestrator:
                     )
                     break
                 except Exception as e:
-                    from rdf.errors import TokenLimitError
+                    from rdf.errors import QuotaError, TokenLimitError
                     if not isinstance(e, TokenLimitError):
                         raise
-                    # ── Token limit pause ────────────────────────────────────
-                    console.rule("[bold red]TOKEN LIMIT[/bold red]")
-                    console.print(
-                        f"[bold red]{e}[/bold red]\n\n"
-                        "[yellow]The model ran out of tokens. The iteration produced no log "
-                        "entry (any sub-agent git commits made before the limit are preserved "
-                        "— check `git log` to see them).\n\n"
-                        "What you can do:\n"
-                        "  - Trim experiment_log.md (archive old entries manually)\n"
-                        "  - Trim or compress current_state.md\n"
-                        "  - Add a hint asking the planner to write a shorter state update\n"
-                        "  - Increase max_output_tokens in config.toml (if available)\n\n"
-                        "Retrying the same input would hit the same limit.[/yellow]\n"
-                    )
+                    # ── Token limit / quota pause ─────────────────────────────
+                    if isinstance(e, QuotaError):
+                        console.rule("[bold red]USAGE QUOTA EXCEEDED[/bold red]")
+                        console.print(
+                            f"[bold red]{e}[/bold red]\n\n"
+                            "[yellow]Claude has run out of extra usage — no retries attempted.\n"
+                            "The iteration produced no log entry (any sub-agent git commits\n"
+                            "made before the quota hit are preserved — check `git log`).\n\n"
+                            "What you can do:\n"
+                            "  - Wait for the quota to reset (time shown above)\n"
+                            "  - Stop with 'n' and resume later\n"
+                            "  - Switch to a different Claude plan or API key[/yellow]\n"
+                        )
+                    else:
+                        console.rule("[bold red]TOKEN LIMIT[/bold red]")
+                        console.print(
+                            f"[bold red]{e}[/bold red]\n\n"
+                            "[yellow]The model ran out of tokens. The iteration produced no log "
+                            "entry (any sub-agent git commits made before the limit are preserved "
+                            "— check `git log` to see them).\n\n"
+                            "What you can do:\n"
+                            "  - Trim experiment_log.md (archive old entries manually)\n"
+                            "  - Trim or compress current_state.md\n"
+                            "  - Add a hint asking the planner to write a shorter state update\n"
+                            "  - Increase max_output_tokens in config.toml (if available)\n\n"
+                            "Retrying the same input would hit the same limit.[/yellow]\n"
+                        )
                     if self.dry_run:
                         break
                     console.print(
