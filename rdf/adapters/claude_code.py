@@ -106,6 +106,19 @@ def _parse_yaml_block(text: str) -> dict:
 class ClaudeCodeExecutorAdapter:
     """Runs tasks via the Claude Code SDK (claude_code_sdk.query)."""
 
+    def __init__(self) -> None:
+        self._default_model_override: str | None = None
+
+    @property
+    def role_name(self) -> str:
+        """Return a role-based name for reporting (e.g. Executor-medium)."""
+        m = (self._default_model_override or "").lower()
+        if "sonnet" in m:
+            return "Executor-medium"
+        if "opus" in m:
+            return "Executor-high"
+        return "Executor-claude"
+
     async def execute(
         self,
         task: str,
@@ -189,13 +202,13 @@ class ClaudeCodeExecutorAdapter:
             m = _re.search(r'result="([^"]+)"', quota_err)
             detail = m.group(1) if m else quota_err[:300]
             from rdf.errors import QuotaError
-            raise QuotaError("claude-executor", detail)
+            raise QuotaError(self.role_name, detail)
 
         # Surface output token limit as a proper exception so the orchestrator can pause
         token_limit_msgs = [e for e in errors if e.startswith("TOKEN_LIMIT:")]
         if token_limit_msgs:
             from rdf.errors import TokenLimitError
-            raise TokenLimitError("claude-executor", token_limit_msgs[0][len("TOKEN_LIMIT: "):])
+            raise TokenLimitError(self.role_name, token_limit_msgs[0][len("TOKEN_LIMIT: "):])
 
         try:
             result = _parse_yaml_block(output)

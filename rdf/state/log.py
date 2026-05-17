@@ -37,8 +37,15 @@ def usage_tokens(usage: Any) -> tuple[int, int, int]:
 
 def estimate_cost(usage: Any, model: str) -> float:
     inp, cac, out = usage_tokens(usage)
-    if "2.5-pro" in model:
+    m = model.lower()
+    if "2.5-pro" in m:
         ip, cp, op = 3.50e-6, 0.875e-6, 10.50e-6
+    elif "qwen" in m:
+        ip, cp, op = 0.10e-6, 0.0, 0.10e-6
+    elif "sonnet" in m:
+        ip, cp, op = 3.00e-6, 0.0, 15.00e-6
+    elif "opus" in m:
+        ip, cp, op = 15.00e-6, 0.0, 75.00e-6
     else:
         ip, cp, op = 1.00e-6, 0.25e-6, 3.00e-6
     return max(0, inp - cac) * ip + cac * cp + out * op

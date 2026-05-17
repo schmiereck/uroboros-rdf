@@ -55,6 +55,8 @@ _LOG_TEMPLATE = """\
 
 _CONFIG_TEMPLATE = """\
 [roles]
+# planner_model    = "qwen/qwen-2.5-72b-instruct"
+# planner_adapter  = "openrouter"
 planner_model    = "gemini-2.5-pro"
 planner_adapter  = "gemini"
 executor_adapter = "claude-code"
@@ -123,22 +125,20 @@ def _find_interrupted_iterations(root: Path) -> list[dict]:
     archive = root / "archive"
     if not archive.exists():
         return []
-    for iter_dir in sorted(archive.iterdir()):
-        if not iter_dir.is_dir() or not iter_dir.name.startswith("iter_"):
-            continue
-        # Check all sub-iteration dirs for checkpoint.yaml
-        for sub_dir in sorted(iter_dir.rglob("checkpoint.yaml")):
-            try:
-                data = yaml.safe_load(sub_dir.read_text(encoding="utf-8"))
-                if data and data.get("status") == "running":
-                    interrupted.append({
-                        "checkpoint_path": sub_dir,
-                        "iter_id": data.get("iter_id"),
-                        "task": data.get("task", ""),
-                        "complexity": data.get("complexity", "medium"),
-                    })
-            except Exception:
-                pass
+    # Scan all directories under archive/ for checkpoint.yaml
+    for checkpoint_file in sorted(archive.rglob("checkpoint.yaml")):
+        try:
+            data = yaml.safe_load(checkpoint_file.read_text(encoding="utf-8"))
+            if data and data.get("status") == "running":
+                interrupted.append({
+                    "checkpoint_path": checkpoint_file,
+                    "iter_dir": checkpoint_file.parent,
+                    "iter_id": data.get("iter_id"),
+                    "task": data.get("task", ""),
+                    "complexity": data.get("complexity", "medium"),
+                })
+        except Exception:
+            pass
     return interrupted
 
 
@@ -147,7 +147,9 @@ def _build_resume_context(root: Path, interrupted: list[dict]) -> str:
     for item in interrupted:
         iter_id = item["iter_id"]
         task_preview = item["task"][:200]
-        result_path = iter_path(root, iter_id) / "result.yaml"
+        # Use the actual directory where we found the checkpoint
+        iter_dir = item["iter_dir"]
+        result_path = iter_dir / "result.yaml"
         if result_path.exists():
             result_summary = result_path.read_text(encoding="utf-8")[:500]
             lines.append(
@@ -187,6 +189,7 @@ class Orchestrator:
             self.planner = MockPlanner()
         else:
             from rdf.adapters.gemini import GeminiPlannerAdapter
+            from rdf.adapters.openrouter import OpenRouterPlannerAdapter
             from rdf.agents.planner import Planner
             from rdf.tools.exec_tools import ExecTools, SubAgentRegistry, make_dispatcher
 
@@ -196,8 +199,13 @@ class Orchestrator:
             def _dispatcher_factory(root: Path):
                 return make_dispatcher(self._exec_tools, root)
 
+            if cfg.planner_adapter == "openrouter":
+                adapter = OpenRouterPlannerAdapter(cfg.planner_model)
+            else:
+                adapter = GeminiPlannerAdapter(cfg)
+
             self.planner = Planner(
-                adapter=GeminiPlannerAdapter(cfg),
+                adapter=adapter,
                 dispatcher_factory=_dispatcher_factory,
                 project_mode=project_mode,
             )
@@ -355,7 +363,8 @@ class Orchestrator:
         chosen_q: Optional[str],
         resume_context: Optional[str] = None,
         delta_override: Optional[str] = None,
-    ) -> tuple[dict, dict, float]:
+        initial_history: Optional[list[dict]] = None,
+    ) -> tuple[dict, dict, float, list[dict]]:
         console.rule(f"[bold blue]ITERATION {n:03d}[/bold blue]")
         (self.root / "archive" / f"iter_{n:03d}").mkdir(parents=True, exist_ok=True)
         (self.root / "src").mkdir(exist_ok=True)
@@ -373,7 +382,10 @@ class Orchestrator:
         planner_log = self.root / "archive" / f"iter_{n:03d}" / "planner_response.txt"
         try:
             with console.status("Calling planner..."):
-                sy, usage = await self.planner.call_async(self.root, delta, self.cfg, call_hint, call_chosen_q, log_path=planner_log)
+                sy, usage, messages = await self.planner.call_async(
+                    self.root, delta, self.cfg, call_hint, call_chosen_q, 
+                    log_path=planner_log, initial_history=initial_history
+                )
         except Exception as e:
             from rdf.errors import TokenLimitError
             if isinstance(e, TokenLimitError):
@@ -387,7 +399,7 @@ class Orchestrator:
                 self.git.commit(self.root, f"iter_{n:03d}: [strategy_error]")
                 if self.cfg.auto_push:
                     self.git.push(self.root)
-            return sy, iy, cost
+            return sy, iy, cost, []
 
         hypothesis = sy.get("hypothesis", "")
         console.print(f"[green]Hypothesis:[/green] {hypothesis}")
@@ -483,7 +495,9 @@ class Orchestrator:
             f"{out/1000:.1f}k out | {rounds} API round{'s' if rounds != 1 else ''} | "
             f"~${cost:.4f} | session ~${self.session_cost:.4f}[/dim]"
         )
-        return sy, iy, cost
+        return sy, iy, cost, messages
+
+    # ── menu ──────────────────────────────────────────────────────────────────
 
     # ── menu ──────────────────────────────────────────────────────────────────
 
@@ -710,8 +724,10 @@ class Orchestrator:
         autonomous_mode = False
         consecutive_errors = 0
         last_hypothesis = ""
+        current_history: Optional[list[dict]] = None
 
         _stop_flag = [False]
+        # ... (rest of _handle_sigint omitted for brevity)
 
         def _handle_sigint(sig, frame):
             if not _stop_flag[0]:
@@ -764,20 +780,25 @@ class Orchestrator:
         try:
             for _ in range(self.cfg.max_iterations):
                 n = top_level_count(self.root) + (0 if retry else 1)
-                iter_resume_context = resume_context if first_iteration else None
+                iter_resume_context = resume_context if (first_iteration or retry) else None
                 first_iteration = False
                 try:
                     if project_mode:
                         project_delta = self._project_delta_prompt(
                             n, hint, chosen_q, iter_resume_context
                         )
-                        sy, iy, cost = await self._run_iteration(
-                            n, hint, chosen_q, delta_override=project_delta
+                        sy, iy, cost, current_history = await self._run_iteration(
+                            n, hint, chosen_q, delta_override=project_delta,
+                            initial_history=current_history
                         )
                     else:
-                        sy, iy, cost = await self._run_iteration(
-                            n, hint, chosen_q, iter_resume_context
+                        sy, iy, cost, current_history = await self._run_iteration(
+                            n, hint, chosen_q, iter_resume_context,
+                            initial_history=current_history
                         )
+                    # On success, clear the history for the NEXT iteration
+                    # (unless we want to keep it? No, usually next iteration starts fresh)
+                    current_history = None
                 except KeyboardInterrupt:
                     console.print(
                         "\n[bold yellow]Ctrl+C – iteration interrupted. Stopping...[/bold yellow]"
@@ -787,6 +808,10 @@ class Orchestrator:
                     from rdf.errors import QuotaError, TokenLimitError
                     if not isinstance(e, TokenLimitError):
                         raise
+                    
+                    # Capture history from the error so we can resume
+                    current_history = getattr(e, "history", None)
+
                     # ── Token limit / quota pause ─────────────────────────────
                     if isinstance(e, QuotaError):
                         console.rule("[bold red]USAGE QUOTA EXCEEDED[/bold red]")
@@ -818,8 +843,8 @@ class Orchestrator:
                         break
                     console.print(
                         "[bold]Actions[/bold]:\n"
-                        "  c   Continue to next iteration (no hint)\n"
-                        "  h   Continue with a hint (e.g. 'write a very short state update')\n"
+                        "  r   Retry iteration (no hint)\n"
+                        "  h   Retry with a hint (e.g. 'write a very short state update')\n"
                         "  n   Stop\n",
                         markup=False,
                     )
@@ -832,16 +857,20 @@ class Orchestrator:
                                 f"[bold]Session total cost: ~${self.session_cost:.4f}[/bold]"
                             )
                             return
-                        if raw in ("c", ""):
+                        if raw in ("r", "c", ""):
                             hint = None
                             break
                         if raw == "h":
                             hint = console.input("Hint to planner: ").strip() or None
                             break
                         console.print("[yellow]Unknown input.[/yellow]")
-                    retry = False
+                    
+                    retry = True
+                    if not self.dry_run:
+                        interrupted = _find_interrupted_iterations(self.root)
+                        resume_context = _build_resume_context(self.root, interrupted)
                     chosen_q = None
-                    continue  # next iteration
+                    continue  # next loop cycle (same n because retry=True)
 
                 if _stop_flag[0]:
                     console.print("[bold]Stopped by Ctrl+C.[/bold]")

@@ -170,7 +170,11 @@ class ExecTools:
         return self._root / "src"
 
     def _on_token_limit(self, iter_id: IterID, d: Path, state: str, exc: Exception) -> None:
-        """Write token_limit result.yaml, clean checkpoint, git-commit before caller re-raises."""
+        """Write token_limit result.yaml and git-commit before caller re-raises.
+        
+        Note: checkpoint.yaml is PRESERVED so the orchestrator can find it
+        on retry and include it in the resume_context.
+        """
         result = {
             "status": "token_limit",
             "notes": str(exc),
@@ -179,9 +183,9 @@ class ExecTools:
             "log_excerpt": state[-500:] if state else "",
         }
         (d / "result.yaml").write_text(yaml.dump(result, allow_unicode=True), encoding="utf-8")
-        checkpoint_path = d / "checkpoint.yaml"
-        if checkpoint_path.exists():
-            checkpoint_path.unlink()
+        # checkpoint_path = d / "checkpoint.yaml"
+        # if checkpoint_path.exists():
+        #     checkpoint_path.unlink()
         self._registry.cleanup(iter_id)
         if self._git and self._cfg.auto_commit:
             self._git.commit(self._root, f"iter_{iter_id}: complete [token_limit]")
@@ -323,8 +327,24 @@ class ExecTools:
             except Exception as exc:
                 from rdf.errors import TokenLimitError
                 if isinstance(exc, TokenLimitError):
+                    # Use role-based name for reporting
+                    role = f"Executor-{complexity}" if complexity != "planner" else "Planner-sub"
                     self._on_token_limit(iter_id, d, state, exc)
-                    raise  # propagates through dispatcher → planner → orchestrator pause
+                    result = {
+                        "status": "token_limit",
+                        "notes": f"{role}: {exc}",
+                        "metrics": {},
+                        "artifacts": [],
+                        "log_excerpt": state[-500:] if state else "",
+                    }
+                    return {
+                        "started": True,
+                        "iter_id": iter_id,
+                        "done": True,
+                        "final_result": result,
+                        "intermediate_state": state,
+                        "elapsed_sec": elapsed,
+                    }
                 raise
             checkpoint_path = d / "checkpoint.yaml"
             if checkpoint_path.exists():
@@ -371,7 +391,19 @@ class ExecTools:
                 from rdf.errors import TokenLimitError
                 if isinstance(exc, TokenLimitError):
                     self._on_token_limit(iter_id, d, state, exc)
-                    raise  # propagates through dispatcher → planner → orchestrator pause
+                    result = {
+                        "status": "token_limit",
+                        "notes": str(exc),
+                        "metrics": {},
+                        "artifacts": [],
+                        "log_excerpt": state[-500:] if state else "",
+                    }
+                    return {
+                        "done": True,
+                        "final_result": result,
+                        "intermediate_state": state,
+                        "elapsed_sec": elapsed,
+                    }
                 raise
             self._registry.cleanup(iter_id)
             checkpoint_path = d / "checkpoint.yaml"

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from rdf.adapters.claude_code import ClaudeCodeExecutorAdapter
+from rdf.adapters.openrouter import OpenRouterExecutorAdapter
 from rdf.agents.executor import Executor
 from rdf.config import Config
 
 _MODEL_MAP: dict[str, str] = {
-    "low": "claude-haiku-4-5-20251001",
+    "low": "qwen/qwen3.6-35b-a3b",
     "medium": "claude-sonnet-4-6",
     "high": "claude-opus-4-7",
 }
@@ -21,9 +22,14 @@ def model_for_complexity(complexity: str, cfg: Config) -> str:
 def make_executor(complexity: str, cfg: Config) -> Executor:
     """Return an Executor configured for the given complexity level."""
     model = _MODEL_MAP.get(complexity, _MODEL_MAP[cfg.default_complexity])
-    adapter = ClaudeCodeExecutorAdapter()
-    # ClaudeCodeExecutorAdapter.execute() accepts model_override; store here
-    # so Executor.run() can pass it through.
+    
+    if "claude" in model.lower():
+        adapter = ClaudeCodeExecutorAdapter()
+    else:
+        # Default to OpenRouter for other models (like Qwen)
+        adapter = OpenRouterExecutorAdapter(model)
+    
+    # Store the model override for the executor loop
     adapter._default_model_override = model  # type: ignore[attr-defined]
 
     class _OverridingExecutor(Executor):

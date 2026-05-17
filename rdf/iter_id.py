@@ -55,7 +55,12 @@ def iter_path(root: Path, iter_id: IterID) -> Path:
     "001.1"   → root/archive/iter_001/iter_001/
     "001.1.2" → root/archive/iter_001/iter_001/iter_002/
     """
-    parts = parse_iter_id(iter_id)
+    try:
+        parts = parse_iter_id(iter_id)
+    except Exception:
+        # Fallback for truly malformed IDs: just use the string literal
+        return root / "archive" / f"iter_{iter_id}"
+
     p = root / "archive" / f"iter_{parts[0]:03d}"
     for sub in parts[1:]:
         p = p / f"iter_{sub:03d}"

@@ -47,6 +47,11 @@ class Planner:
         self._project_mode = project_mode
         self._system_prompt: str | None = None
 
+    @property
+    def role_name(self) -> str:
+        """Return a role-based name for reporting."""
+        return "Planner-top" if self._project_mode else "Planner-sub"
+
     def _prompt(self, root: Path, cfg: Config) -> str:
         if self._system_prompt is None:
             self._system_prompt = build_system_prompt(root, self._project_mode)
@@ -82,7 +87,8 @@ class Planner:
         hint: str | None = None,
         chosen_q: str | None = None,
         log_path: Path | None = None,
-    ) -> tuple[dict, Any]:
+        initial_history: list[dict] | None = None,
+    ) -> tuple[dict, Any, list[dict]]:
         from types import SimpleNamespace
 
         from rdf.tools.declarations import ALL_TOOL_DECLARATIONS, READ_TOOL_DECLARATIONS
@@ -98,7 +104,14 @@ class Planner:
         )
         tool_declarations = ALL_TOOL_DECLARATIONS if dispatcher else READ_TOOL_DECLARATIONS
 
-        messages = [{"role": "user", "content": delta}]
+        if initial_history:
+            messages = initial_history
+            # Append the new delta as a follow-up if we are resuming
+            # (Alternatively, if we are exactly at the same point, we might not want to append delta again)
+            # For now, let's assume if initial_history is provided, we just use it.
+            # But the orchestrator might want to add a "Continue" message.
+        else:
+            messages = [{"role": "user", "content": delta}]
 
         def _add_usage(acc: Any, u: Any) -> Any:
             """Sum token counts from usage object u into acc SimpleNamespace."""
@@ -120,13 +133,20 @@ class Planner:
                     api_call_rounds=0,
                 )
 
-                plan_result = await self._adapter.complete(
-                    system=system_prompt,
-                    messages=messages,
-                    tool_declarations=tool_declarations,
-                    dispatcher=dispatcher,
-                    cache_hint=str(root),
-                )
+                try:
+                    plan_result = await self._adapter.complete(
+                        system=system_prompt,
+                        messages=messages,
+                        tool_declarations=tool_declarations,
+                        dispatcher=dispatcher,
+                        cache_hint=str(root),
+                    )
+                except Exception as e:
+                    from rdf.errors import TokenLimitError
+                    if isinstance(e, TokenLimitError):
+                        # Attach current messages to the error so we can resume
+                        e.history = messages
+                    raise
 
                 text = plan_result.text
                 _add_usage(acc_usage, plan_result.usage)
@@ -135,7 +155,7 @@ class Planner:
 
                 for parse_attempt in range(cfg.max_retries_on_parse_fail + 1):
                     try:
-                        return _parse_yaml_block(text), acc_usage
+                        return _parse_yaml_block(text), acc_usage, messages
                     except yaml.YAMLError as ye:
                         if parse_attempt >= cfg.max_retries_on_parse_fail:
                             raise
@@ -147,13 +167,19 @@ class Planner:
                             "Once you have real results from run_agent, end your response with "
                             "the required ```yaml``` block reporting what actually happened."
                         )})
-                        plan_result = await self._adapter.complete(
-                            system=system_prompt,
-                            messages=messages,
-                            tool_declarations=tool_declarations,
-                            dispatcher=dispatcher,
-                            cache_hint=str(root),
-                        )
+                        try:
+                            plan_result = await self._adapter.complete(
+                                system=system_prompt,
+                                messages=messages,
+                                tool_declarations=tool_declarations,
+                                dispatcher=dispatcher,
+                                cache_hint=str(root),
+                            )
+                        except Exception as e:
+                            from rdf.errors import TokenLimitError
+                            if isinstance(e, TokenLimitError):
+                                e.history = messages
+                            raise
                         text = plan_result.text
                         _add_usage(acc_usage, plan_result.usage)
                         if log_path is not None:
