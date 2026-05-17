@@ -663,6 +663,7 @@ class Orchestrator:
         console.print(
             "\n[bold]Actions[/bold] – letter(s) + Enter:\n"
             "  y      Start next iteration\n"
+            "  r      Retry last iteration (same number)\n"
             "  a      Autonomous mode (pauses on milestone / error / loop)\n"
             "  h      Add a hint, then start\n"
             "  s      Show git log\n"
@@ -678,7 +679,7 @@ class Orchestrator:
             if raw == "h":
                 hint = console.input("Hint to planner: ").strip() or None
                 return "y", hint
-            if raw in ("y", "a", "n"):
+            if raw in ("y", "r", "a", "n"):
                 return raw, None
             console.print("[yellow]Unknown input.[/yellow]")
 
@@ -748,6 +749,8 @@ class Orchestrator:
                 if start_choice == "n":
                     signal.signal(signal.SIGINT, old_sigint)
                     return
+                if start_choice == "r":
+                    retry = True
                 if start_choice == "a":
                     autonomous_mode = True
                     console.print(
