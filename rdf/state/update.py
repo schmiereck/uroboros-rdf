@@ -13,7 +13,7 @@ from rdf.state.log import tokens
 console = Console(highlight=False, legacy_windows=False)
 
 # Type alias for the async planner call injected by the Orchestrator
-AsyncPlannerCall = Callable[..., Awaitable[tuple[dict, Any]]]
+AsyncPlannerCall = Callable[..., Awaitable[tuple[dict, Any, list[dict]]]]
 
 
 async def update_state(
@@ -29,7 +29,7 @@ async def update_state(
     shorter version. Hard-truncates with a [truncated] marker as last resort.
 
     *planner_call* is an async callable with signature
-    ``async (root, prompt, cfg) -> (data_dict, usage)``.
+    ``async (root, prompt, cfg) -> (data_dict, usage, history)``.
 
     Returns a list of extra usage objects from any shortening calls made,
     so the caller can track their cost.
@@ -47,7 +47,7 @@ async def update_state(
             f"that preserves all key findings."
         )
         try:
-            data, usage = await planner_call(root, shorten, cfg)
+            data, usage, _ = await planner_call(root, shorten, cfg)
             extra_usages.append(usage)
             new_state = data.get("state_update", new_state)
             if tokens(new_state) <= cfg.max_state_tokens:

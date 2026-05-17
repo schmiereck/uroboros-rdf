@@ -113,7 +113,7 @@ async def _run_planner_subagent(
     )
 
     try:
-        data, _ = await inner_planner.call_async(root, delta, cfg)
+        data, _, _ = await inner_planner.call_async(root, delta, cfg)
     except Exception as e:
         from rdf.errors import TokenLimitError
         if isinstance(e, TokenLimitError):
