@@ -651,36 +651,48 @@ class Orchestrator:
             if last_status == "ok"
             else ("red" if last_status == "code_error" else "yellow")
         )
-        console.print()
-        console.print(Panel(
-            f"[bold]Last iteration:[/bold]  {last_n:03d}/{self.cfg.max_iterations}\n"
-            f"[bold]Hypothesis:[/bold]      {last_hypothesis}\n"
-            f"[bold]Status:[/bold]          [{status_color}]{last_status}[/{status_color}]\n"
-            f"[bold]Metrics:[/bold]         {last_metrics}\n"
-            + (f"[dim]{state_summary}[/dim]" if state_summary else ""),
-            title="[bold blue]── RDF READY ──[/bold blue]",
-        ))
-        console.print(
-            "\n[bold]Actions[/bold] – letter(s) + Enter:\n"
-            "  y      Start next iteration\n"
-            "  r      Retry last iteration (same number)\n"
-            "  a      Autonomous mode (pauses on milestone / error / loop)\n"
-            "  h      Add a hint, then start\n"
-            "  s      Show git log\n"
-            "  n      Exit\n",
-            markup=False,
-        )
+        
+        hint: Optional[str] = None
 
         while True:
+            console.print()
+            console.print(Panel(
+                f"[bold]Last iteration:[/bold]  {last_n:03d}/{self.cfg.max_iterations}\n"
+                f"[bold]Hypothesis:[/bold]      {last_hypothesis}\n"
+                f"[bold]Status:[/bold]          [{status_color}]{last_status}[/{status_color}]\n"
+                f"[bold]Metrics:[/bold]         {last_metrics}\n"
+                + (f"[dim]{state_summary}[/dim]" if state_summary else ""),
+                title="[bold blue]── RDF READY ──[/bold blue]",
+            ))
+            
+            if hint:
+                console.print(Panel(
+                    f"[yellow]{hint}[/yellow]",
+                    title="[bold yellow]── ACTIVE HINT ──[/bold yellow]",
+                    border_style="yellow",
+                ))
+
+            console.print(
+                "\n[bold]Actions[/bold] – letter(s) + Enter:\n"
+                "  y      Start next iteration (y201)\n"
+                "  r      Retry last iteration (r200)\n"
+                "  h      Set/edit hint\n"
+                "  a      Autonomous mode (pauses on milestone / error / loop)\n"
+                "  s      Show git log\n"
+                "  n      Exit\n",
+                markup=False,
+            )
+
             raw = console.input("[bold]Input:[/bold] ").strip().lower()
             if raw == "s":
                 console.print(f"\n{self.git.log_oneline(self.root)}", markup=False)
                 continue
             if raw == "h":
-                hint = console.input("Hint to planner: ").strip() or None
-                return "y", hint
+                new_hint = console.input("Hint to planner: ").strip()
+                hint = new_hint or None
+                continue
             if raw in ("y", "r", "a", "n"):
-                return raw, None
+                return raw, hint
             console.print("[yellow]Unknown input.[/yellow]")
 
     # ── main loop ─────────────────────────────────────────────────────────────
