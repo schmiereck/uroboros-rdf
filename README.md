@@ -1,12 +1,21 @@
  ![Uroboros-RDF](pictures/Uroboros-RDF-Logo-120px_e00.jpg)
 # Uroboros-RDF
 
-**Recursive Discovery Framework v3** (or **Research & Development Framework**) — an autonomous research orchestrator that pairs two AI agents in an iterative experiment loop:
+**Recursive Discovery Framework v3** — an autonomous research orchestrator that leverages a multi-tiered hierarchy of AI agents to automate scientific discovery, code generation, and empirical analysis.
 
-- **Gemini 2.5 Pro** (strategy) — analyses results, forms falsifiable hypotheses, and plans the next experiment
-- **Claude Code** (implementation) — executes the experiment: writes code, runs simulations, collects metrics
+Uroboros-RDF pairs strategic planning with autonomous execution in a closed-loop system, now featuring **recursive sub-goal decomposition**.
 
-Each iteration produces a git commit. The loop runs until a research milestone is reached or you stop it.
+## Key Features
+
+- **Recursive Orchestration:** The **Planner (Gemini 2.5 Pro)** can autonomously decompose complex research goals into sub-goals and delegate them to specialized sub-agents.
+- **Dual-Agent Synergy:** Combines the high-level reasoning of Gemini with the specialized coding capabilities of **Claude Code** or the cost-effective performance of **Qwen 3.6**.
+- **Model Hierarchy & Efficiency:**
+    - `low`: **Qwen 3.6 35B-A3B** (via OpenRouter) — fast, efficient, and extremely cheap for routine tasks.
+    - `medium`: **Claude 3.5 Sonnet** — the default for complex implementations.
+    - `high`: **Claude 3 Opus** — for foundational architectural reasoning.
+- **Session Persistence:** Full recovery after token limits or quota hits. The framework preserves agent history, allowing seamless retries without losing context.
+- **Scientific Methodology:** Rooted in the "Minimal Validating Step" principle, ensuring every iteration tests a falsifiable hypothesis.
+- **Persistent Environment:** Agents operate within a persistent `src/` directory, evolving the codebase iteratively across the entire research lifecycle.
 
 ---
 
@@ -14,55 +23,49 @@ Each iteration produces a git commit. The loop runs until a research milestone i
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  STRATEGY  Gemini 2.5 Pro (context-cached system prompt)    │
-│  · analyses current state + last 3 log entries              │
-│  · proposes one falsifiable hypothesis                       │
-│  · writes a concrete task for the implementer               │
+│  PLANNER (Top-level)  Gemini 2.5 Pro / Qwen 3.6             │
+│  · analyses state + research log                            │
+│  · identifies sub-goals and chooses agent tiers             │
 └──────────────────────┬──────────────────────────────────────┘
-                       │ task.md
-┌──────────────────────▼──────────────────────────────────────┐
-│  IMPLEMENT  Claude Code SDK (cwd = project/src/)            │
-│  · reads task, writes/modifies code in src/                 │
-│  · runs experiments, saves results to archive/iter_NNN/     │
-│  · reports metrics + status in a YAML block                 │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ result.yaml
-┌──────────────────────▼──────────────────────────────────────┐
+                       │ run_agent(complexity='...')
+        ┌──────────────┴──────────────┬──────────────┐
+        ▼                             ▼              ▼
+┌─────────────────┐           ┌────────────────┐    ┌─────────────────┐
+│ EXECUTOR (low)  │           │ EXECUTOR (med) │    │ SUB-PLANNER     │
+│ Qwen 3.6 MoE    │           │ Claude Sonnet  │    │ Gemini 2.5 Pro  │
+│ · simple scripts│           │ · refactorings │    │ · decomposes    │
+│ · data parsing  │           │ · debugging    │    │ · nested loop   │
+└────────┬────────┘           └───────┬────────┘    └────────┬────────┘
+         └──────────────┬─────────────┴──────────────────────┘
+                        │ result.yaml
+┌───────────────────────▼─────────────────────────────────────┐
 │  COMMIT  git commit + optional push                         │
+│  · hypothesis → git commit message                          │
 │  · milestone_reached → git tag milestone-<name>             │
-│  · [CONVERGED] hypothesis → git tag converged-NNN           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-After each iteration the menu lets you:
+---
+
+## User Interface
+
+The interactive startup menu and post-iteration controls provide precise steering:
 
 | Key | Action |
 |-----|--------|
-| `y` | Next iteration (Gemini chooses direction freely) |
-| `a` | Autonomous mode — runs until milestone, 2 consecutive errors, or a hypothesis loop |
-| `o2` | Steer Gemini toward open question 2 |
-| `h` | Give Gemini a hint for the next iteration |
-| `r` | Repeat the current iteration with a new hint |
-| `n` | Stop and save |
-
-Gemini can also pause autonomous mode itself by setting `user_question` in its output — a magenta prompt appears and your answer is passed back as context.
-
----
-
-## Project layout (two repos)
-
-| Repo | Purpose |
-|------|---------|
-| `uroboros-rdf/` | **This repo** — the tool: `orchestrator.py`, `docs/`, `requirements.txt` |
-| `rdf_digital_physic/` | Research project — `goal.md`, `src/`, `archive/`, `config.toml` |
-
-Code written by the Claude agent lives in `project/src/` and persists across all iterations. Per-iteration metadata (task, result, results data) goes to `project/archive/iter_NNN/`.
+| `y` | Start/Continue next iteration. |
+| `r` | **Retry** last iteration (uses same ID, perfect after bug fixes). |
+| `h` | Set/Edit a **Hint** for the planner (displayed as ACTIVE HINT). |
+| `a` | **Autonomous mode** — runs until milestone, error, or loop detected. |
+| `o1-oN`| Focus the planner on a specific research direction from its own list. |
+| `s` | Show current status (git log). |
+| `n` | Stop and save session. |
 
 ---
 
 ## Setup
 
-**Requirements:** Python 3.11+, a Gemini API key, Claude Code CLI logged in.
+**Requirements:** Python 3.11+, Gemini API key, OpenRouter API key (optional), Claude Code CLI.
 
 ```bash
 # 1. Clone and create the tool venv
@@ -72,9 +75,9 @@ python -m venv .venv
 .venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 
-# 2. Set your Gemini API key
-set GEMINI_API_KEY=your-key-here   # Windows
-# export GEMINI_API_KEY=...        # Linux / macOS
+# 2. Set API keys
+set GEMINI_API_KEY=...
+set OPENROUTER_API_KEY=...      # For Qwen 3.6 support
 
 # 3. Authenticate Claude Code
 claude login
@@ -82,25 +85,20 @@ claude login
 
 ---
 
-## Creating a new research project
+## Creating a research project
 
 ```bash
 # Initialise a project directory
-python orchestrator.py --project path\to\my_project init
+python rdf.py --project path\to\my_project init
 
-# Edit goal.md with your research objective, then run
-python orchestrator.py --project path\to\my_project run
+# Run in Iterative Mode (standard)
+python rdf.py --project path\to\my_project run
+
+# Run in Project Mode (decomposition-focused)
+python rdf.py --project path\to\my_project project
 ```
 
-The project directory gets its own `requirements.txt` and optionally its own `.venv/` for experiment dependencies. If `project/.venv/` exists the orchestrator activates it automatically for the Claude agent.
-
-### Dry-run (no API keys needed)
-
-```bash
-python orchestrator.py --project path\to\my_project run --dry-run
-```
-
-Runs 3 mock iterations with fake agents to verify the pipeline end-to-end.
+The system prompts are now modular and can be customized in `rdf/core/prompts/*.md`.
 
 ---
 
@@ -110,29 +108,22 @@ Runs 3 mock iterations with fake agents to verify the pipeline end-to-end.
 
 → [schmiereck/rdf_digital_physic](https://github.com/schmiereck/rdf_digital_physic)
 
-Phase 1 result: 22 of 33 reversible bit-conserving rules produce stable gliders in a 1D 3-bit cellular automaton.
-
 ---
 
-## Configuration (`config.toml` in the project directory)
+## Configuration (`config.toml`)
 
 ```toml
-[models]
-strategy = "gemini-2.5-pro"
+[roles]
+planner_model    = "gemini-2.5-pro"
+planner_adapter  = "gemini"         # or "openrouter"
+executor_adapter = "claude-code"
 
-[claude_code]
-allowed_tools = "Read,Write,Edit,Bash"
-dangerously_skip_permissions = false
+[agent_routing]
+default_complexity = "medium"
+max_depth = 4                       # Max recursion for sub-planners
 
 [limits]
 max_iterations = 100
-experiment_timeout_sec = 14400   # 4 h per Claude run; null = unlimited
-
-[git]
-auto_commit = true
-auto_push = false   # set to true to push to GitHub after every iteration
-
-[cache]
-ttl_hours = 6
-min_cache_tokens = 32768   # Gemini context cache minimum
+max_state_tokens = 8000
+executor_timeout_sec = 14400        # 4 h per run
 ```
