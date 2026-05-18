@@ -258,10 +258,19 @@ Tools available via function calling:
                     name = tc["function"]["name"]
                     args = json.loads(tc["function"]["arguments"])
                     
-                    # Log tool call to stdout
+                    # Log full tool call to stdout file
                     tc_log = f"\n[Tool Call: {name}({args})]\n"
                     collected_output.append(tc_log)
-                    console.print(f"[dim]    ↳ {name}({args})[/dim]")
+                    
+                    # Log simplified tool call to console
+                    if name in ("read_file", "list_dir", "write_file"):
+                        console.print(f"[dim]    ↳ {name}({args.get('path', '')})[/dim]")
+                    elif name == "bash":
+                        cmd = args.get("command", "")
+                        cmd_short = cmd[:50] + ("..." if len(cmd) > 50 else "")
+                        console.print(f"[dim]    ↳ bash({cmd_short})[/dim]")
+                    else:
+                        console.print(f"[dim]    ↳ {name}[/dim]")
                     
                     result = ""
                     try:
