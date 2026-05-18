@@ -138,6 +138,12 @@ class ClaudeCodeExecutorAdapter:
             kwargs["model"] = self.model
         full_task = task + _RESULT_YAML_REMINDER
 
+        options = ClaudeCodeOptions(
+            allowed_tools=allowed_tools,
+            cwd=str(cwd),
+            model=kwargs["model"],
+        )
+
         collected: list[str] = []
         errors: list[str] = []
 
