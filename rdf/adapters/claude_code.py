@@ -106,13 +106,13 @@ def _parse_yaml_block(text: str) -> dict:
 class ClaudeCodeExecutorAdapter:
     """Runs tasks via the Claude Code SDK (claude_code_sdk.query)."""
 
-    def __init__(self) -> None:
-        self._default_model_override: str | None = None
+    def __init__(self, model: str = "claude-sonnet-4-6", **kwargs) -> None:
+        self.model = model
 
     @property
     def role_name(self) -> str:
         """Return a role-based name for reporting (e.g. Executor-medium)."""
-        m = (self._default_model_override or "").lower()
+        m = self.model.lower()
         if "sonnet" in m:
             return "Executor-medium"
         if "opus" in m:
@@ -134,8 +134,8 @@ class ClaudeCodeExecutorAdapter:
         kwargs: dict[str, Any] = {"allowed_tools": allowed_tools, "cwd": cwd}
         if model_override:
             kwargs["model"] = model_override
-
-        options = ClaudeCodeOptions(**kwargs)
+        else:
+            kwargs["model"] = self.model
         full_task = task + _RESULT_YAML_REMINDER
 
         collected: list[str] = []

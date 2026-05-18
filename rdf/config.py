@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 try:
     import tomllib
@@ -18,8 +18,21 @@ except ImportError:
 
 
 @dataclass
+class AgentConfig:
+    """Configuration for a specific agent role/complexity."""
+    adapter: str
+    model: str
+    params: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class Config:
-    # --- roles ---
+    # --- dynamic agents ---
+    # maps "role" -> { "complexity" -> AgentConfig }
+    # e.g. agents["executor"]["low"]
+    agents: Dict[str, Dict[str, AgentConfig]] = field(default_factory=dict)
+
+    # --- roles (legacy/defaults) ---
     planner_model: str = "gemini-2.5-pro"
     planner_adapter: str = "gemini"
     executor_adapter: str = "claude-code"
@@ -60,7 +73,28 @@ class Config:
             d = tomllib.load(f)
         c = cls()
 
-        # [roles] section (Phase 2)
+        # [agents] section (Dynamic configuration)
+        # Structure: [agents.<role>.<complexity>]
+        agents_data = d.get("agents", {})
+        for role, complexities in agents_data.items():
+            if not isinstance(complexities, dict):
+                continue
+            c.agents[role] = {}
+            for comp, data in complexities.items():
+                if not isinstance(data, dict):
+                    continue
+                adapter = data.get("adapter")
+                model = data.get("model")
+                if adapter and model:
+                    # Extract all other keys as params
+                    params = {k: v for k, v in data.items() if k not in ("adapter", "model")}
+                    c.agents[role][comp] = AgentConfig(
+                        adapter=adapter,
+                        model=model,
+                        params=params
+                    )
+
+        # [roles] section (Legacy / Top-level fallback)
         roles = d.get("roles", {})
         c.planner_model = roles.get("planner_model", c.planner_model)
         c.planner_adapter = roles.get("planner_adapter", c.planner_adapter)
@@ -84,12 +118,8 @@ class Config:
         lim = d.get("limits", {})
         c.max_iterations = lim.get("max_iterations", c.max_iterations)
         c.max_state_tokens = lim.get("max_state_tokens", c.max_state_tokens)
-        # Phase 2 names
         c.planner_timeout_sec = lim.get("planner_timeout_sec", c.planner_timeout_sec)
         c.executor_timeout_sec = lim.get("executor_timeout_sec", c.executor_timeout_sec)
-        # Phase 1 backward-compat aliases
-        c.planner_timeout_sec = lim.get("strategy_timeout_sec", c.planner_timeout_sec)
-        c.executor_timeout_sec = lim.get("experiment_timeout_sec", c.executor_timeout_sec)
         c.max_retries_on_parse_fail = lim.get(
             "max_retries_on_parse_fail", c.max_retries_on_parse_fail
         )

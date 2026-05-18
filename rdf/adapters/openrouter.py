@@ -24,7 +24,7 @@ console = Console(highlight=False, legacy_windows=False)
 class OpenRouterAdapter:
     """Base class for OpenRouter API interaction."""
 
-    def __init__(self, model: str) -> None:
+    def __init__(self, model: str, **kwargs) -> None:
         self.model = model
         self.api_key = os.environ.get("OPENROUTER_API_KEY")
         self.base_url = "https://openrouter.ai/api/v1"

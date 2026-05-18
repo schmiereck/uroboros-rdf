@@ -55,13 +55,30 @@ _LOG_TEMPLATE = """\
 
 _CONFIG_TEMPLATE = """\
 [roles]
-# planner_model    = "qwen/qwen-2.5-72b-instruct"
-# planner_adapter  = "openrouter"
 planner_model    = "gemini-2.5-pro"
 planner_adapter  = "gemini"
 executor_adapter = "claude-code"
 
+# --- NEU: Flexible Agenten-Konfiguration ---
+
+# Das "Hauptgehirn" (Top-Level Planner)
+# [agents.planner.top]
+# adapter = "GeminiPlannerAdapter"
+# model   = "gemini-2.5-pro"
+
+# Der günstige Executor über OpenRouter
+[agents.executor.low]
+adapter = "OpenRouterExecutorAdapter"
+model   = "qwen/qwen3.6-35b-a3b"
+
+# Claude über den Pro Plan (Login)
+[agents.executor.medium]
+adapter = "ClaudeCodeExecutorAdapter"
+model   = "claude-sonnet-4-6"
+
 [claude_code]
+allowed_tools = "Read,Write,Edit,Bash"
+dangerously_skip_permissions = false
 allowed_tools = "Read,Write,Edit,Bash"
 dangerously_skip_permissions = false
 
@@ -187,9 +204,7 @@ class Orchestrator:
         if dry_run:
             from rdf.agents.planner import MockPlanner
             self.planner = MockPlanner()
-        else:
-            from rdf.adapters.gemini import GeminiPlannerAdapter
-            from rdf.adapters.openrouter import OpenRouterPlannerAdapter
+            from rdf.adapters import create_adapter
             from rdf.agents.planner import Planner
             from rdf.tools.exec_tools import ExecTools, SubAgentRegistry, make_dispatcher
 
@@ -199,10 +214,22 @@ class Orchestrator:
             def _dispatcher_factory(root: Path):
                 return make_dispatcher(self._exec_tools, root)
 
-            if cfg.planner_adapter == "openrouter":
-                adapter = OpenRouterPlannerAdapter(cfg.planner_model)
+            # Try dynamic configuration for top-level planner
+            agent_cfg = cfg.agents.get("planner", {}).get("top")
+            if agent_cfg:
+                adapter = create_adapter(agent_cfg)
             else:
-                adapter = GeminiPlannerAdapter(cfg)
+                # Fallback to legacy logic
+                if cfg.planner_adapter == "openrouter":
+                    from rdf.adapters.openrouter import OpenRouterPlannerAdapter
+                    adapter = OpenRouterPlannerAdapter(cfg.planner_model)
+                else:
+                    from rdf.adapters.gemini import GeminiPlannerAdapter
+                    adapter = GeminiPlannerAdapter(
+                        model=cfg.planner_model,
+                        cache_ttl_hours=cfg.cache_ttl_hours,
+                        min_cache_tokens=cfg.min_cache_tokens
+                    )
 
             self.planner = Planner(
                 adapter=adapter,
@@ -577,10 +604,10 @@ class Orchestrator:
             )
             console.print(
                 "\n[bold]Actions[/bold] – letter(s) + Enter:\n"
-                "  y      Next iteration (planner chooses direction)\n"
+                "  y      Next iteration\n"
                 + o_hint +
                 "  a      Autonomous mode (pauses on milestone / error / loop)\n"
-                "  h      Set/edit hint for the planner\n"
+                "  h      Set/edit hint\n"
                 "  r      Retry current iteration (with hint)\n"
                 "  d      git diff --stat HEAD~1\n"
                 "  s      Status report (git log)\n"

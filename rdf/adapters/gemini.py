@@ -123,8 +123,16 @@ async def _call_with_tools_async(
 class GeminiPlannerAdapter:
     """Planner adapter backed by Google Gemini (google.genai)."""
 
-    def __init__(self, cfg: Config) -> None:
-        self._cfg = cfg
+    def __init__(
+        self,
+        model: str = "gemini-2.5-pro",
+        cache_ttl_hours: int = 6,
+        min_cache_tokens: int = 32768,
+        **kwargs
+    ) -> None:
+        self.model = model
+        self.cache_ttl_hours = cache_ttl_hours
+        self.min_cache_tokens = min_cache_tokens
         self._system_prompt: str | None = None
 
     async def complete(
@@ -138,13 +146,14 @@ class GeminiPlannerAdapter:
         from google import genai  # type: ignore
         from google.genai import types  # type: ignore
 
-        cfg = self._cfg
         client = genai.Client()
         gemini_tools = _to_gemini_tools(tool_declarations)
         cache = get_or_create_cache(
             # cache_hint is the project root path encoded as string
             _hint_to_root(cache_hint),
-            cfg,
+            self.model,
+            self.cache_ttl_hours,
+            self.min_cache_tokens,
             system,
             gemini_tools,
         ) if cache_hint else None
@@ -174,7 +183,7 @@ class GeminiPlannerAdapter:
                     )
 
                 text, usage_meta = await _call_with_tools_async(
-                    client, cfg.planner_model, history, gen_cfg, dispatcher
+                    client, self.model, history, gen_cfg, dispatcher
                 )
                 return PlanResult(text=text, usage=usage_meta)
 
