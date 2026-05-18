@@ -584,7 +584,7 @@ class Orchestrator:
                 "  r      Retry current iteration (with hint)\n"
                 "  d      git diff --stat HEAD~1\n"
                 "  s      Status report (git log)\n"
-                "  n      Stop and save\n",
+                "  n      Stop and exit\n",
                 markup=False,
             )
 
@@ -866,7 +866,7 @@ class Orchestrator:
                         "[bold]Actions[/bold]:\n"
                         "  r   Retry iteration (no hint)\n"
                         "  h   Retry with a hint (e.g. 'write a very short state update')\n"
-                        "  n   Stop\n",
+                        "  n   Stop and exit\n",
                         markup=False,
                     )
                     while True:
