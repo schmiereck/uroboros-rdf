@@ -142,17 +142,6 @@ class ClaudeCodeExecutorAdapter:
         errors: list[str] = []
 
         async def _stream() -> None:
-            _orig_exec = None
-            if sys.platform == "win32":
-                import subprocess as _sp
-                _orig_exec = asyncio.create_subprocess_exec
-
-                async def _shielded_exec(*args: Any, **kwargs: Any) -> Any:
-                    kwargs.setdefault("creationflags", 0)
-                    kwargs["creationflags"] |= _sp.CREATE_NEW_PROCESS_GROUP
-                    return await _orig_exec(*args, **kwargs)  # type: ignore[misc]
-
-                asyncio.create_subprocess_exec = _shielded_exec  # type: ignore[assignment]
             try:
                 async for msg in query(prompt=full_task, options=options):
                     if msg is None:
@@ -175,12 +164,9 @@ class ClaudeCodeExecutorAdapter:
                         )
             except Exception as exc:
                 errors.append(f"SDK error: {exc}")
-            finally:
-                if _orig_exec is not None:
-                    asyncio.create_subprocess_exec = _orig_exec  # type: ignore[assignment]
 
-        # The project root is the parent of cwd (cwd = project/src/)
-        project_root = cwd.parent
+        # The project root is cwd (standardised to self._root in exec_tools)
+        project_root = cwd
         try:
             with _project_venv(project_root):
                 if timeout_sec:
