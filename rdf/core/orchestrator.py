@@ -79,8 +79,6 @@ model   = "claude-sonnet-4-6"
 [claude_code]
 allowed_tools = "Read,Write,Edit,Bash"
 dangerously_skip_permissions = false
-allowed_tools = "Read,Write,Edit,Bash"
-dangerously_skip_permissions = false
 
 [limits]
 max_iterations = 100
@@ -204,6 +202,7 @@ class Orchestrator:
         if dry_run:
             from rdf.agents.planner import MockPlanner
             self.planner = MockPlanner()
+        else:
             from rdf.adapters import create_adapter
             from rdf.agents.planner import Planner
             from rdf.tools.exec_tools import ExecTools, SubAgentRegistry, make_dispatcher
@@ -275,7 +274,7 @@ class Orchestrator:
 
     # ── bootstrap ─────────────────────────────────────────────────────────────
 
-    def bootstrap(self) -> None:
+    async def bootstrap(self) -> None:
         console.print("[bold]Running bootstrap...[/bold]")
         goal = (self.root / "goal.md").read_text(encoding="utf-8")
 
@@ -296,7 +295,7 @@ class Orchestrator:
                 f"Use the state_update field for the full initial state text; "
                 f"populate other fields with plausible placeholders.\n"
             )
-            data, _ = self.planner.call(self.root, delta, self.cfg)  # sync ok here (called before loop)
+            data, _, _ = await self.planner.call_async(self.root, delta, self.cfg)
             state = data.get("state_update", goal)
 
         (self.root / "current_state.md").write_text(state, encoding="utf-8")
@@ -506,7 +505,7 @@ class Orchestrator:
                     r"[^a-z0-9]+", "-", milestone.lower()
                 ).strip("-")
                 self.git.tag(self.root, tag)
-                console.print(f"[bold green]Milestone tagged: {tag}[/bold green]")
+                console.print(f"[bold green]Milestone reached: {milestone}[/bold green] (tag: {tag})")
             if hypothesis.startswith("[CONVERGED]"):
                 self.git.tag(self.root, f"converged-{n:03d}")
                 console.print(
@@ -523,8 +522,6 @@ class Orchestrator:
             f"~${cost:.4f} | session ~${self.session_cost:.4f}[/dim]"
         )
         return sy, iy, cost, messages
-
-    # ── menu ──────────────────────────────────────────────────────────────────
 
     # ── menu ──────────────────────────────────────────────────────────────────
 
@@ -578,13 +575,7 @@ class Orchestrator:
                 panel_body,
                 title=f"[{title_color}]── ITERATION {n:03d} COMPLETE ──[/{title_color}]",
             ))
-            if milestone:
-                console.print(
-                    f"\n[bold green]Milestone reached: {milestone}[/bold green]  "
-                    f"(git tag: milestone-"
-                    f"{re.sub(r'[^a-z0-9]+', '-', milestone.lower()).strip('-')})"
-                )
-
+            
             if current_hint:
                 console.print(Panel(
                     f"[yellow]{current_hint}[/yellow]",
@@ -748,7 +739,7 @@ class Orchestrator:
              or "bootstrap erforderlich" in state_text.lower())
             and top_level_count(self.root) == 0
         ):
-            self.bootstrap()
+            await self.bootstrap()
 
         if not self.dry_run:
             venv_dir = self.root / ".venv"
@@ -773,7 +764,6 @@ class Orchestrator:
         current_history: Optional[list[dict]] = None
 
         _stop_flag = [False]
-        # ... (rest of _handle_sigint omitted for brevity)
 
         def _handle_sigint(sig, frame):
             if not _stop_flag[0]:
@@ -845,7 +835,6 @@ class Orchestrator:
                             initial_history=current_history
                         )
                     # On success, clear the history for the NEXT iteration
-                    # (unless we want to keep it? No, usually next iteration starts fresh)
                     current_history = None
                 except KeyboardInterrupt:
                     console.print(
@@ -1016,10 +1005,17 @@ class Orchestrator:
     def _acceptance_report(self) -> None:
         console.rule("[bold green]ACCEPTANCE REPORT[/bold green]")
 
-        console.print("\n[bold]1. Created files:[/bold]")
-        for p in sorted(self.root.rglob("*")):
-            if p.is_file() and ".git" not in p.parts:
-                console.print(f"  {p.relative_to(self.root)}")
+        console.print("\n[bold]1. Relevant created files:[/bold]")
+        # Only show relevant research files, ignore venv, git, cache, pycache, etc.
+        relevant_dirs = ["src", "archive"]
+        for d_name in relevant_dirs:
+            d_path = self.root / d_name
+            if d_path.exists():
+                console.print(f"  [{d_name}/]")
+                for p in sorted(d_path.rglob("*")):
+                    # Filter out noise
+                    if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("."):
+                        console.print(f"    {p.relative_to(self.root)}")
 
         console.print(
             f"\n[bold]2. git log --oneline:[/bold]\n{self.git.log_oneline(self.root, 10)}"
@@ -1032,7 +1028,7 @@ class Orchestrator:
   - Few-shot content: fictional WikiText-103 research run (domain-agnostic).
     For domain-specific context: create system_glossary.md.
   - Gemini cost estimate: 2.5 Pro prices (2025). May differ from actual billing.
-  - Executor: Claude Code SDK, async query() API, cwd = src/ (persistent).
+  - Executor: Claude Code SDK, async query() API, cwd = project root (standardised).
   - Token estimate: 1 token = 4 chars (Gemini convention).
 """)
 

@@ -221,8 +221,11 @@ class MockPlanner:
         hint: str | None = None,
         chosen_q: str | None = None,
         log_path: Path | None = None,
-    ) -> tuple[dict, Any]:
-        return await self._mock_data(root)
+        initial_history: list[dict] | None = None,
+    ) -> tuple[dict, Any, list[dict]]:
+        data, usage = await self._mock_data(root)
+        messages = initial_history or [{"role": "user", "content": delta}]
+        return data, usage, messages
 
     def call(
         self,
@@ -231,14 +234,20 @@ class MockPlanner:
         cfg: Config,
         hint: str | None = None,
         chosen_q: str | None = None,
+        log_path: Path | None = None,
     ) -> tuple[dict, Any]:
         import concurrent.futures
         try:
             asyncio.get_running_loop()
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, self.call_async(root, delta, cfg, hint, chosen_q)).result()
+                # call sync wrapper only returns 2 values for backward compat
+                data, usage, _ = pool.submit(
+                    asyncio.run, self.call_async(root, delta, cfg, hint, chosen_q, log_path)
+                ).result()
+                return data, usage
         except RuntimeError:
-            return asyncio.run(self.call_async(root, delta, cfg, hint, chosen_q))
+            data, usage, _ = asyncio.run(self.call_async(root, delta, cfg, hint, chosen_q, log_path))
+            return data, usage
 
     async def _mock_data(self, root: Path) -> tuple[dict, Any]:
         n = top_level_count(root) + 1
