@@ -107,8 +107,30 @@ async def _run_planner_subagent(
     def _factory(r: Path):
         return make_dispatcher(inner_exec, r)
 
+    from rdf.adapters import create_adapter
+
+    # Try dynamic configuration for sub-planner (use 'top' as fallback)
+    agent_cfg = cfg.agents.get("planner", {}).get("sub")
+    if not agent_cfg:
+        agent_cfg = cfg.agents.get("planner", {}).get("top")
+
+    if agent_cfg:
+        adapter = create_adapter(agent_cfg)
+    else:
+        # Fallback to legacy logic
+        if cfg.planner_adapter == "openrouter":
+            from rdf.adapters.openrouter import OpenRouterPlannerAdapter
+            adapter = OpenRouterPlannerAdapter(cfg.planner_model)
+        else:
+            from rdf.adapters.gemini import GeminiPlannerAdapter
+            adapter = GeminiPlannerAdapter(
+                model=cfg.planner_model,
+                cache_ttl_hours=cfg.cache_ttl_hours,
+                min_cache_tokens=cfg.min_cache_tokens
+            )
+
     inner_planner = Planner(
-        adapter=GeminiPlannerAdapter(cfg),
+        adapter=adapter,
         dispatcher_factory=_factory,
     )
 
