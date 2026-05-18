@@ -516,34 +516,9 @@ class Orchestrator:
                     state_summary = stripped[:120] + ("…" if len(stripped) > 120 else "")
                     break
 
-        milestone_line = (
-            f"\n[bold green]MILESTONE:[/bold green] {milestone}" if milestone else ""
-        )
-        panel_body = (
-            f"[bold]Iteration:[/bold] {n}/{self.cfg.max_iterations}"
-            + milestone_line + "\n"
-            f"[bold]Hypothesis:[/bold] {sy.get('hypothesis', '')}\n"
-            f"[bold]Status:[/bold]    {iy.get('status', 'unknown')}\n"
-            f"[bold]Metrics:[/bold]   {iy.get('metrics', {})}\n"
-            f"[bold]Cost:[/bold]      ~${cost:.4f} | Session ~${self.session_cost:.4f}\n"
-            + (f"[dim]{state_summary}[/dim]" if state_summary else "")
-        )
-        title_color = "bold green" if milestone else "bold blue"
-        console.print()
-        console.print(Panel(
-            panel_body,
-            title=f"[{title_color}]── ITERATION {n:03d} COMPLETE ──[/{title_color}]",
-        ))
-        if milestone:
-            console.print(
-                f"\n[bold green]Milestone reached: {milestone}[/bold green]  "
-                f"(git tag: milestone-"
-                f"{re.sub(r'[^a-z0-9]+', '-', milestone.lower()).strip('-')})"
-            )
-
         # Planner's blocking question
         user_q = (sy.get("user_question") or "").strip()
-        pending_hint: Optional[str] = None
+        current_hint: Optional[str] = None
         if user_q:
             console.print(Panel(
                 f"[bold magenta]Planner asks:[/bold magenta]\n\n{user_q}\n\n"
@@ -555,34 +530,65 @@ class Orchestrator:
                 "[bold magenta]Your answer[/bold magenta] (Enter = skip): "
             ).strip()
             if answer:
-                pending_hint = answer
-
-        if open_qs:
-            console.print("\n[bold]Research directions the planner wants to explore:[/bold]")
-            for i, q in enumerate(open_qs, 1):
-                console.print(f"  [cyan]{i}.[/cyan] {q}")
-
-        o_hint = (
-            f"  o1-o{len(open_qs)}  Focus on a research direction (e.g. o2)\n"
-            if open_qs
-            else ""
-        )
-        console.print(
-            "\n[bold]Actions[/bold] – letter(s) + Enter:\n"
-            "  y      Next iteration (planner chooses direction)\n"
-            + o_hint +
-            "  a      Autonomous mode (pauses on milestone / error / loop)\n"
-            "  h      Add a hint to the planner\n"
-            "  r      Retry iteration (with hint)\n"
-            "  d      git diff --stat HEAD~1\n"
-            "  s      Status report (git log)\n"
-            "  n      Stop and save\n",
-            markup=False,
-        )
+                current_hint = answer
 
         while True:
+            milestone_line = (
+                f"\n[bold green]MILESTONE:[/bold green] {milestone}" if milestone else ""
+            )
+            panel_body = (
+                f"[bold]Iteration:[/bold] {n}/{self.cfg.max_iterations}"
+                + milestone_line + "\n"
+                f"[bold]Hypothesis:[/bold] {sy.get('hypothesis', '')}\n"
+                f"[bold]Status:[/bold]    {iy.get('status', 'unknown')}\n"
+                f"[bold]Metrics:[/bold]   {iy.get('metrics', {})}\n"
+                f"[bold]Cost:[/bold]      ~${cost:.4f} | Session ~${self.session_cost:.4f}\n"
+                + (f"[dim]{state_summary}[/dim]" if state_summary else "")
+            )
+            title_color = "bold green" if milestone else "bold blue"
+            console.print()
+            console.print(Panel(
+                panel_body,
+                title=f"[{title_color}]── ITERATION {n:03d} COMPLETE ──[/{title_color}]",
+            ))
+            if milestone:
+                console.print(
+                    f"\n[bold green]Milestone reached: {milestone}[/bold green]  "
+                    f"(git tag: milestone-"
+                    f"{re.sub(r'[^a-z0-9]+', '-', milestone.lower()).strip('-')})"
+                )
+
+            if current_hint:
+                console.print(Panel(
+                    f"[yellow]{current_hint}[/yellow]",
+                    title="[bold yellow]── ACTIVE HINT ──[/bold yellow]",
+                    border_style="yellow",
+                ))
+
+            if open_qs:
+                console.print("\n[bold]Research directions the planner wants to explore:[/bold]")
+                for i, q in enumerate(open_qs, 1):
+                    console.print(f"  [cyan]{i}.[/cyan] {q}")
+
+            o_hint = (
+                f"  o1-o{len(open_qs)}  Focus on a research direction (e.g. o2)\n"
+                if open_qs
+                else ""
+            )
+            console.print(
+                "\n[bold]Actions[/bold] – letter(s) + Enter:\n"
+                "  y      Next iteration (planner chooses direction)\n"
+                + o_hint +
+                "  a      Autonomous mode (pauses on milestone / error / loop)\n"
+                "  h      Set/edit hint for the planner\n"
+                "  r      Retry current iteration (with hint)\n"
+                "  d      git diff --stat HEAD~1\n"
+                "  s      Status report (git log)\n"
+                "  n      Stop and save\n",
+                markup=False,
+            )
+
             raw = console.input("[bold]Input:[/bold] ").strip().lower()
-            hint: Optional[str] = pending_hint
             chosen_q: Optional[str] = None
 
             m = re.match(r"^o(\d+)$", raw)
@@ -591,7 +597,7 @@ class Orchestrator:
                 if 0 <= idx < len(open_qs):
                     chosen_q = open_qs[idx]
                     console.print(f"[green]Focus:[/green] {chosen_q}")
-                    return "y", hint, chosen_q
+                    return "y", current_hint, chosen_q
                 console.print(f"[yellow]Please enter o1 to o{len(open_qs)}.[/yellow]")
                 continue
 
@@ -605,13 +611,13 @@ class Orchestrator:
                     f"\n[bold]git log:[/bold]\n{self.git.log_oneline(self.root)}"
                 )
                 continue
-            if raw in ("h", "r"):
+            if raw == "h":
                 extra = console.input("Hint to planner: ").strip()
-                hint = "\n".join(filter(None, [pending_hint, extra])) or None
-                if raw == "h":
-                    raw = "y"
+                current_hint = extra or None
+                continue
+
             if raw in ("y", "r", "n", "a"):
-                return raw, hint, chosen_q
+                return raw, current_hint, chosen_q
             console.print("[yellow]Unknown input.[/yellow]")
 
     # ── startup menu ──────────────────────────────────────────────────────────
