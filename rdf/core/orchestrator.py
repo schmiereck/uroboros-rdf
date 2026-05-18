@@ -680,8 +680,8 @@ class Orchestrator:
 
             console.print(
                 "\n[bold]Actions[/bold] – letter(s) + Enter:\n"
-                "  y      Start next iteration (y201)\n"
-                "  r      Retry last iteration (r200)\n"
+                "  y      Start next iteration\n"
+                "  r      Retry last iteration\n"
                 "  h      Set/edit hint\n"
                 "  a      Autonomous mode (pauses on milestone / error / loop)\n"
                 "  s      Show git log\n"
