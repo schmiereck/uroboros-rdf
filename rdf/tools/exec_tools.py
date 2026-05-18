@@ -310,7 +310,8 @@ class ExecTools:
             executor = make_executor(complexity, self._cfg)
 
             async def _run():
-                return await executor.run(task, d, self._src_dir(), self._cfg)
+                # Run from project root to match Planner's path assumptions (src/..., archive/...)
+                return await executor.run(task, d, self._root, self._cfg)
 
             task_obj = asyncio.create_task(_run())
 

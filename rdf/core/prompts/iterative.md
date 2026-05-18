@@ -109,10 +109,11 @@ The research project has a fixed two-directory layout:
   archive/iter_NNN/ ← Metadata only: task.md, result.yaml, results/.
                        NEVER create or run code inside archive/.
 
-When writing task descriptions for run_agent, always refer to files as `src/<filename>`.
-NEVER write paths like `archive/iter_NNN/code/` – that layout no longer exists.
-If an earlier iteration produced `src/foo.py`, the implementer already has it;
-just reference or modify it in-place.
+The Executor operates from the **project root** (the parent of `src/` and `archive/`).
+When writing task descriptions for run_agent, always refer to files using their 
+full relative paths: `src/<filename>` or `archive/iter_NNN/<filename>`.
+NEVER write paths like `archive/iter_NNN/code/`.
+If an earlier iteration produced `src/foo.py`, it exists at `src/foo.py`.
 
 ---
 

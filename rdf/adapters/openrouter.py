@@ -258,6 +258,11 @@ Tools available via function calling:
                     name = tc["function"]["name"]
                     args = json.loads(tc["function"]["arguments"])
                     
+                    # Log tool call to stdout
+                    tc_log = f"\n[Tool Call: {name}({args})]\n"
+                    collected_output.append(tc_log)
+                    console.print(f"[dim]    ↳ {name}({args})[/dim]")
+                    
                     result = ""
                     try:
                         if name == "read_file":
@@ -291,6 +296,9 @@ Tools available via function calling:
                         result = f"Error: {e}"
                         errors.append(result)
 
+                    # Log tool result to stdout
+                    collected_output.append(f"[Tool Result: {result[:500]}{'...' if len(result)>500 else ''}]\n")
+
                     history.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
@@ -302,10 +310,23 @@ Tools available via function calling:
 
         output = "\n".join(collected_output)
         
+        # Try to find a YAML block in the entire output (even if mixed with text)
+        result_yaml = None
         try:
             from rdf.adapters.claude_code import _parse_yaml_block
             result_yaml = _parse_yaml_block(output)
         except Exception:
+            # Fallback: check if ANY message in history has a yaml block
+            for h_msg in reversed(history):
+                content = h_msg.get("content")
+                if content and "```yaml" in content:
+                    try:
+                        result_yaml = _parse_yaml_block(content)
+                        break
+                    except Exception:
+                        pass
+        
+        if not result_yaml:
             result_yaml = {
                 "status": "code_error",
                 "notes": "Failed to parse YAML block from Qwen output",
