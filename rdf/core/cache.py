@@ -9,15 +9,18 @@ from typing import Any
 
 from rich.console import Console
 
-from rdf.config import Config
-
 console = Console(highlight=False, legacy_windows=False)
 
 _CACHE_FILE = Path(".rdf_cache.json")
 
 
 def get_or_create_cache(
-    root: Path, cfg: Config, system_prompt: str, tools: list
+    root: Path,
+    model: str,
+    ttl_hours: int,
+    min_cache_tokens: int,
+    system_prompt: str,
+    tools: list,
 ) -> Any:
     """Return a Gemini CachedContent (with tools embedded) or None (silent fallback)."""
     try:
@@ -34,11 +37,11 @@ def get_or_create_cache(
     stable_content = f"# GOAL\n{goal}\n\n# OLDER LOG\n{older}"
 
     total_chars = len(system_prompt) + len(stable_content)
-    threshold_chars = cfg.min_cache_tokens * 4
+    threshold_chars = min_cache_tokens * 4
     if total_chars < threshold_chars:
         console.print(
-            f"[dim]Cache skipped: {total_chars//4:,} tokens < {cfg.min_cache_tokens:,} threshold "
-            f"(grows into caching when content exceeds {cfg.min_cache_tokens:,} tokens)[/dim]"
+            f"[dim]Cache skipped: {total_chars//4:,} tokens < {min_cache_tokens:,} threshold "
+            f"(grows into caching when content exceeds {min_cache_tokens:,} tokens)[/dim]"
         )
         return None
 
@@ -64,7 +67,7 @@ def get_or_create_cache(
 
     try:
         cache = client.caches.create(
-            model=cfg.planner_model,
+            model=model,
             config=types.CreateCachedContentConfig(
                 system_instruction=system_prompt,
                 contents=[
@@ -74,16 +77,16 @@ def get_or_create_cache(
                     )
                 ],
                 tools=tools,
-                ttl=f"{cfg.cache_ttl_hours * 3600}s",
+                ttl=f"{ttl_hours * 3600}s",
                 display_name=f"rdf-{root.name}-{h}",
             ),
         )
         _CACHE_FILE.write_text(json.dumps({"hash": h, "cache_name": cache.name}))
         # Gemini charges cache storage at ~$4.50/M tokens/hour on top of per-call fees.
         cache_tokens = len(system_prompt + stable_content) // 4
-        storage_cost_est = cache_tokens / 1_000_000 * 4.50 * cfg.cache_ttl_hours
+        storage_cost_est = cache_tokens / 1_000_000 * 4.50 * ttl_hours
         console.print(
-            f"[dim]Cache created: ~{cache_tokens:,} tokens × {cfg.cache_ttl_hours}h TTL "
+            f"[dim]Cache created: ~{cache_tokens:,} tokens × {ttl_hours}h TTL "
             f"≈ ~${storage_cost_est:.3f} storage[/dim]"
         )
         return cache
